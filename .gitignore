@@ -48,7 +48,6 @@ desktop.ini
 node_modules/
 
 # Pydoc output
-*.html
 
 # Temp dirs created by transcript/screenshot service
 tmp/

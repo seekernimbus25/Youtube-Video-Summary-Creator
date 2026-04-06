@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Video Summarizer</title>
+    <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+    <style>
+        :root {
+            --bg-color: #0f172a;
+            --surface: #1e293b;
+            --surface-hover: #334155;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --accent: #3b82f6;
+            --accent-hover: #2563eb;
+            --border: #334155;
+            --error: #ef4444;
+            --success: #10b981;
+        }
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 2rem;
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1, h2, h3 { color: var(--text-primary); }
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+        .input-group {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        input[type="text"] {
+            flex: 1;
+            padding: 0.75rem 1rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: var(--bg-color);
+            color: var(--text-primary);
+            font-size: 1rem;
+        }
+        button {
+            padding: 0.75rem 1.5rem;
+            border-radius: 8px;
+            border: none;
+            background: var(--accent);
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        button:hover { background: var(--accent-hover); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        
+        .progress-steps {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 2rem;
+            position: relative;
+        }
+        .step {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            z-index: 1;
+            color: var(--text-secondary);
+        }
+        .step.active { color: var(--accent); }
+        .step.completed { color: var(--success); }
+        
+
+        .error-card { border-color: var(--error); color: var(--error); }
+        .success-card { background: var(--success); color: white; display: none; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;}
+        
+        #mindmap {
+            width: 100%;
+            height: 700px;
+            background: var(--bg-color);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--border);
+        }
+        .screenshot { max-width: 100%; border-radius: 8px; margin-top: 1rem; border: 1px solid var(--border); }
+        .concept-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
+        .concept-card { background: var(--bg-color); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--border); }
+        .hidden { display: none !important; }
+        .stepper-label { margin-top: 0.5rem; font-size: 0.85rem; }
+        .comparison-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.9rem; }
+        .comparison-table th { background: var(--surface-hover); color: var(--accent); text-align: left; padding: 0.6rem 0.9rem; border: 1px solid var(--border); font-weight: 600; }
+        .comparison-table td { padding: 0.6rem 0.9rem; border: 1px solid var(--border); color: var(--text-secondary); vertical-align: top; }
+        .comparison-table tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
+        .keyword-tag { background: var(--surface-hover); color: var(--text-secondary); padding: 0.3rem 0.7rem; border-radius: 20px; font-size: 0.85rem; border: 1px solid var(--border); }
+    </style>
+</head>
+<body>
+    <header style="text-align: center; margin-bottom: 3rem;">
+        <h1>YouTube Video Summarizer</h1>
+        <p style="color: var(--text-secondary)">AI-powered deep contextual analysis</p>
+    </header>
+
+    <div class="card id-input-card">
+        <form id="submitForm">
+            <div class="input-group">
+                <input type="text" id="urlInput" placeholder="Paste YouTube URL here..." required>
+                <button type="submit" id="submitBtn">Summarize Video</button>
+            </div>
+            <label style="color: var(--text-secondary); display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
+                <input type="checkbox" id="screenshotsToggle" checked> Include Inline Screenshots (requires backend ffmpeg support)
+            </label>
+        </form>
+    </div>
+
+    <div class="card error-card hidden" id="errorCard"></div>
+    <div class="success-card hidden" id="successCard">Copied to clipboard!</div>
+
+    <div class="card hidden" id="progressCard">
+        <h3 id="progressMessage" style="text-align: center; margin-bottom: 2rem;">Initializing...</h3>
+        <!-- Simple Progress UI -->
+        <div style="background: var(--bg-color); border-radius: 8px; height: 8px; width: 100%; overflow: hidden;">
+            <div id="progressBar" style="height: 100%; width: 0%; background: var(--accent); transition: width 0.3s ease;"></div>
+        </div>
+    </div>
+
+    <div class="results hidden" id="resultsContainer">
+        <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-bottom: 1rem;">
+            <button onclick="copyMarkdown()">Copy as Markdown</button>
+            <button onclick="downloadMarkdown()" style="background: var(--success);">Download .md</button>
+        </div>
+
+        <div class="card" id="overviewCard">
+            <h2>Overview</h2>
+            <div id="overviewContent"></div>
+        </div>
+
+        <div class="card" id="mindmapCard">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+                <h2 style="margin:0;">Knowledge Mindmap</h2>
+                <button onclick="downloadMindmapPng()" style="background:#6d28d9; font-size:0.85rem; padding:0.5rem 1rem;">Download PNG</button>
+            </div>
+            <div id="mindmap"></div>
+        </div>
+
+        <div class="card" id="keySectionsCard">
+            <h2>Key Sections Breakdown</h2>
+            <div id="keySectionsContent"></div>
+        </div>
+        
+        <div class="card" id="mainPointsCard">
+            <h2>Key Insights</h2>
+            <ul id="mainPointsContent" style="padding-left: 1.5rem; margin-top: 1rem;"></ul>
+        </div>
+
+        <div class="card" id="conceptsCard">
+            <h2>Important Concepts Explained</h2>
+            <div class="concept-grid" id="conceptsContent"></div>
+        </div>
+
+        <div class="card hidden" id="comparisonCard">
+            <h2>Comparison</h2>
+            <div id="comparisonContent" style="overflow-x: auto;"></div>
+        </div>
+
+        <div class="card hidden" id="recommendationsCard">
+            <h2>Practical Recommendations</h2>
+            <ul id="recommendationsContent" style="padding-left: 1.5rem; margin-top: 1rem;"></ul>
+        </div>
+
+        <div class="card hidden" id="conclusionCard">
+            <h2>Conclusion</h2>
+            <p id="conclusionContent" style="line-height: 1.8; color: var(--text-secondary);"></p>
+        </div>
+
+        <div class="card hidden" id="keywordsCard">
+            <h2>Keywords</h2>
+            <div id="keywordsContent" style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem;"></div>
+        </div>
+
+    </div>
+
+    <script>
+        const form = document.getElementById('submitForm');
+        const submitBtn = document.getElementById('submitBtn');
+        const urlInput = document.getElementById('urlInput');
+        const screenshotsToggle = document.getElementById('screenshotsToggle');
+        const progressCard = document.getElementById('progressCard');
+        const progressBar = document.getElementById('progressBar');
+        const errorCard = document.getElementById('errorCard');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const successCard = document.getElementById('successCard');
+        
+        let targetMarkdown = "";
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const url = urlInput.value;
+            if (!url) return;
+
+            // Reset UI
+            errorCard.classList.add('hidden');
+            successCard.classList.add('hidden');
+            resultsContainer.classList.add('hidden');
+            progressCard.classList.remove('hidden');
+            submitBtn.disabled = true;
+            document.getElementById('progressMessage').innerText = "Connecting...";
+            progressBar.style.width = "0%";
+
+            try {
+                const response = await fetch('/api/summarize', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: url, include_screenshots: screenshotsToggle.checked })
+                });
+
+                if (!response.ok) throw new Error("Network response was not ok");
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    const chunk = decoder.decode(value, { stream: true });
+                    const lines = chunk.split('\n\n');
+                    
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.slice(6));
+                                handleSSE(data);
+                            } catch (parseErr) {
+                                console.error("JSON parse error on SSE stream", parseErr, line);
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                showError("CONNECTION_ERROR", err.message);
+            } finally {
+                submitBtn.disabled = false;
+                setTimeout(() => { progressCard.classList.add('hidden'); }, 1000);
+            }
+        });
+
+        function handleSSE(data) {
+            if (data.type === 'progress') {
+                document.getElementById('progressMessage').innerText = data.message;
+                const percent = (data.step / data.total_steps) * 100;
+                progressBar.style.width = `${percent}%`;
+            } else if (data.type === 'result') {
+                renderResults(data.data);
+            } else if (data.type === 'error') {
+                showError(data.code, data.message);
+            }
+        }
+
+        function showError(code, msg) {
+            errorCard.innerHTML = `<strong>Error: [${code}]</strong> <p>${msg}</p>`;
+            errorCard.classList.remove('hidden');
+            resultsContainer.classList.add('hidden');
+            progressCard.classList.add('hidden');
+        }
+
+        function renderResults(data) {
+            resultsContainer.classList.remove('hidden');
+            
+            // Render Overview
+            const ov = data.summary.video_overview;
+            document.getElementById('overviewContent').innerHTML = `
+                <div style="display: flex; gap: 2rem; align-items: start;">
+                    ${data.metadata.thumbnail_url ? `<img src="${data.metadata.thumbnail_url}" style="max-width:200px; border-radius: 8px; flex-shrink:0;">` : ''}
+                    <div>
+                        <h3 style="margin-top:0">${ov.title}</h3>
+                        <p style="margin: 0.5rem 0"><strong style="color:var(--accent)">Channel:</strong> ${ov.channel}</p>
+                        <p style="margin: 0.5rem 0"><strong style="color:var(--accent)">Duration:</strong> ${ov.duration}</p>
+                        <p style="margin: 0.5rem 0"><strong style="color:var(--accent)">Topic:</strong> ${ov.main_topic}</p>
+                        ${ov.elevator_pitch ? `<p style="margin-top:1rem; padding: 1rem; background: var(--bg-color); border-left: 3px solid var(--accent); border-radius: 4px; color: var(--text-secondary);">${ov.elevator_pitch}</p>` : ''}
+                    </div>
+                </div>
+            `;
+            
+            // Build key sections with inline screenshots
+            const sections = data.summary.key_sections;
+            const usedScreenshots = new Set();
+            const ksHtml = sections.map((sec, idx) => {
+                const secStart = sec.timestamp_seconds || 0;
+                const secEnd = (idx + 1 < sections.length)
+                    ? (sections[idx + 1].timestamp_seconds || secStart + 120)
+                    : Infinity;
+                const secTitleLower = sec.title ? sec.title.trim().toLowerCase() : '';
+
+                // 1st priority: exact section_title match (AI links screenshot to a named section)
+                let shot = data.screenshots.find(s =>
+                    !usedScreenshots.has(s.seconds) &&
+                    s.section_title && secTitleLower &&
+                    s.section_title.trim().toLowerCase() === secTitleLower
+                );
+
+                // 2nd priority: screenshot timestamp falls within this section's time range
+                if (!shot) {
+                    shot = data.screenshots.find(s =>
+                        !usedScreenshots.has(s.seconds) &&
+                        s.seconds >= secStart && s.seconds < secEnd
+                    );
+                }
+
+                if (shot) usedScreenshots.add(shot.seconds);
+                const imgHtml = shot ? `
+                    <div style="margin: 1rem 0;">
+                        <img src="${shot.url}" class="screenshot" alt="${shot.caption}">
+                        <p style="font-size:0.85rem; color:var(--text-secondary); text-align:center; margin-top:0.5rem;">${shot.caption} [${shot.timestamp_formatted}]</p>
+                    </div>
+                ` : '';
+                const stepsHtml = sec.steps && sec.steps.length ? `
+                    <div style="margin: 0.75rem 0;">
+                        <p style="font-size:0.85rem; font-weight:600; color: var(--accent); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.05em;">Steps</p>
+                        <ol style="margin: 0; padding-left: 1.4rem; color: var(--text-secondary); font-size: 0.95rem;">
+                            ${sec.steps.map(s => `<li style="margin-bottom:0.35rem;">${s}</li>`).join('')}
+                        </ol>
+                    </div>
+                ` : '';
+                const subPointsHtml = sec.sub_points && sec.sub_points.length ? `
+                    <ul style="margin: 0.5rem 0 0.75rem 1.25rem; padding: 0; color: var(--text-secondary); font-size: 0.95rem;">
+                        ${sec.sub_points.map(p => `<li style="margin-bottom:0.3rem;">${p}</li>`).join('')}
+                    </ul>
+                ` : '';
+                const tradeOffsHtml = sec.trade_offs && sec.trade_offs.length ? `
+                    <div style="margin: 0.75rem 0;">
+                        <p style="font-size:0.85rem; font-weight:600; color: #ef4444; margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.05em;">Trade-offs</p>
+                        <ul style="margin: 0; padding-left: 1.4rem; color: var(--text-secondary); font-size: 0.9rem;">
+                            ${sec.trade_offs.map(t => `<li style="margin-bottom:0.3rem;">${t}</li>`).join('')}
+                        </ul>
+                    </div>
+                ` : '';
+                const notableHtml = sec.notable_detail ? `
+                    <div style="margin: 0.75rem 0; padding: 0.6rem 1rem; background: var(--bg-color); border-left: 3px solid #f59e0b; border-radius: 4px; font-size: 0.9rem; color: var(--text-secondary);">
+                        <strong style="color: #f59e0b;">Notable:</strong> ${sec.notable_detail}
+                    </div>
+                ` : '';
+                return `
+                    <div style="margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border);">
+                        <h3 style="color: var(--accent); margin-bottom: 0.5rem;">[${sec.timestamp}] ${sec.title}</h3>
+                        <p style="margin-bottom: 0.5rem; line-height: 1.7;">${sec.description}</p>
+                        ${subPointsHtml}
+                        ${stepsHtml}
+                        ${tradeOffsHtml}
+                        ${notableHtml}
+                        ${imgHtml}
+                    </div>
+                `;
+            }).join('');
+            document.getElementById('keySectionsContent').innerHTML = ksHtml;
+
+            // Key Insights list
+            const insights = data.summary.key_insights || data.summary.main_points || [];
+            document.getElementById('mainPointsContent').innerHTML = insights.map(p => `<li style="margin-bottom:0.5rem;">${p}</li>`).join('');
+
+            // Concepts grid
+            const concHtml = data.summary.important_concepts.map(c => `
+                <div class="concept-card">
+                    <h3 style="margin-top:0; color: var(--text-primary);">&#10024; ${c.concept}</h3>
+                    <p style="color: var(--text-secondary); margin-bottom: 0.75rem;">${c.explanation}</p>
+                    ${c.why_it_matters ? `<p style="font-size:0.9rem; color: var(--accent); margin-bottom: 0.5rem;"><strong>Why it matters:</strong> ${c.why_it_matters}</p>` : ''}
+                    ${c.example_from_video ? `<p style="font-size:0.85rem; color: #f59e0b; margin: 0; padding: 0.5rem 0.75rem; background: rgba(245,158,11,0.08); border-radius: 4px;"><strong>In the video:</strong> ${c.example_from_video}</p>` : ''}
+                </div>
+            `).join('');
+            document.getElementById('conceptsContent').innerHTML = concHtml;
+
+            // Comparison table
+            const ct = data.summary.comparison_table;
+            if (ct && ct.applicable && ct.headers && ct.headers.length) {
+                document.getElementById('comparisonCard').classList.remove('hidden');
+                const headerHtml = ct.headers.map(h => `<th>${h}</th>`).join('');
+                const rowsHtml = ct.rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('');
+                document.getElementById('comparisonContent').innerHTML = `<table class="comparison-table"><thead><tr>${headerHtml}</tr></thead><tbody>${rowsHtml}</tbody></table>`;
+            }
+
+            // Practical recommendations
+            const recs = data.summary.practical_recommendations || [];
+            if (recs.length) {
+                document.getElementById('recommendationsCard').classList.remove('hidden');
+                document.getElementById('recommendationsContent').innerHTML = recs.map(r => `<li style="margin-bottom:0.5rem;">${r}</li>`).join('');
+            }
+
+            // Conclusion
+            if (data.summary.conclusion) {
+                document.getElementById('conclusionCard').classList.remove('hidden');
+                document.getElementById('conclusionContent').textContent = data.summary.conclusion;
+            }
+
+            // Keywords
+            const kws = data.summary.keywords || [];
+            if (kws.length) {
+                document.getElementById('keywordsCard').classList.remove('hidden');
+                document.getElementById('keywordsContent').innerHTML = kws.map(k => `<span class="keyword-tag">${k}</span>`).join('');
+            }
+
+            // Render Mindmap
+            renderMindmap(data.mindmap);
+
+            // Assemble Markdown block (matches example summary format)
+            const insightsList = data.summary.key_insights || data.summary.main_points || [];
+            const sectionsMarkdown = data.summary.key_sections.map(s => {
+                let md = `### [${s.timestamp}] ${s.title}\n\n${s.description}`;
+                if (s.sub_points && s.sub_points.length) md += '\n\n' + s.sub_points.map(p => '- ' + p).join('\n');
+                if (s.steps && s.steps.length) md += '\n\n**Steps:**\n' + s.steps.map((st, i) => `${i+1}. ${st}`).join('\n');
+                if (s.trade_offs && s.trade_offs.length) md += '\n\n**Trade-offs:**\n' + s.trade_offs.map(t => '- ' + t).join('\n');
+                if (s.notable_detail) md += `\n\n> **Notable:** ${s.notable_detail}`;
+                return md;
+            }).join('\n\n---\n\n');
+            const conceptsMarkdown = data.summary.important_concepts.map(c => {
+                let md = `### ${c.concept}\n\n${c.explanation}`;
+                if (c.why_it_matters) md += `\n\n**Why it matters:** ${c.why_it_matters}`;
+                if (c.example_from_video) md += `\n\n**In the video:** ${c.example_from_video}`;
+                return md;
+            }).join('\n\n');
+            let compTableMarkdown = '';
+            if (ct && ct.applicable && ct.headers && ct.headers.length) {
+                const sep = ct.headers.map(() => '---').join(' | ');
+                compTableMarkdown = `\n\n## Comparison\n\n| ${ct.headers.join(' | ')} |\n| ${sep} |\n` + ct.rows.map(r => `| ${r.join(' | ')} |`).join('\n');
+            }
+            const recsMarkdown = recs.length ? `\n\n## Practical Recommendations\n\n${recs.map(r => '- ' + r).join('\n')}` : '';
+            const conclusionMarkdown = data.summary.conclusion ? `\n\n## Conclusion\n\n${data.summary.conclusion}` : '';
+            const kwMarkdown = kws.length ? `\n\n## Keywords\n\n${kws.join(', ')}` : '';
+            targetMarkdown = `# ${ov.title}\n\n**Channel:** ${ov.channel} | **Duration:** ${ov.duration}\n\n> ${ov.elevator_pitch || ov.main_topic}\n\n---\n\n## Key Insights\n\n${insightsList.map(p => '- ' + p).join('\n')}\n\n---\n\n## Key Sections\n\n${sectionsMarkdown}\n\n---\n\n## Important Concepts\n\n${conceptsMarkdown}${compTableMarkdown}${recsMarkdown}${conclusionMarkdown}${kwMarkdown}`;
+        }
+
+        function wrapLabel(label, maxChars) {
+            const words = label.split(' ');
+            const lines = [];
+            let cur = '';
+            for (const w of words) {
+                const test = cur ? cur + ' ' + w : w;
+                if (test.length > maxChars && cur) { lines.push(cur); cur = w; }
+                else cur = test;
+            }
+            if (cur) lines.push(cur);
+            return lines;
+        }
+
+        function renderMindmap(data) {
+            const container = document.getElementById('mindmap');
+            container.innerHTML = '';
+
+            const BRANCH_COLORS = ['#8b5cf6','#06b6d4','#10b981','#f59e0b','#ef4444','#f97316','#3b82f6','#ec4899'];
+            const BG = '#0f172a';
+            const LEVEL_GAP = 210;  // horizontal px per depth level
+            const WRAP_CHARS = 48;  // chars before wrapping leaf text
+            const LINE_H = 14;      // px per line of wrapped text
+
+            const rootHier = d3.hierarchy(data);
+            const topChildren = rootHier.children || [];
+
+            // Assign color and left/right side — alternate: index 0→right, 1→left, 2→right...
+            topChildren.forEach((child, i) => {
+                const color = BRANCH_COLORS[i % BRANCH_COLORS.length];
+                const isLeft = (i % 2 !== 0);
+                child.descendants().forEach(d => { d._color = color; d._isLeft = isLeft; });
+            });
+            rootHier._color = '#4f46e5';
+            rootHier._isLeft = false;
+
+            // Estimate max wrapped lines in leaf nodes to set vertical spacing
+            let maxLeafLines = 1;
+            rootHier.leaves().forEach(d => {
+                maxLeafLines = Math.max(maxLeafLines, Math.ceil(d.data.label.length / WRAP_CHARS));
+            });
+            const NODE_V_GAP = Math.max(24, maxLeafLines * LINE_H + 10);
+
+            const tree = d3.tree().nodeSize([NODE_V_GAP, LEVEL_GAP]);
+            tree(rootHier);
+
+            // Mirror y-coordinates for left-side branches
+            rootHier.descendants().forEach(d => {
+                if (d._isLeft && d.depth > 0) d.y = -d.y;
+            });
+
+            // Compute bounding box
+            const allNodes = rootHier.descendants();
+            const minX = Math.min(...allNodes.map(d => d.x));
+            const maxX = Math.max(...allNodes.map(d => d.x));
+            const minY = Math.min(...allNodes.map(d => d.y));
+            const maxY = Math.max(...allNodes.map(d => d.y));
+
+            const PAD_V = 30;
+            const PAD_H = 180; // room for leaf text on edges
+            const svgW = (maxY - minY) + PAD_H * 2;
+            const svgH = (maxX - minX) + PAD_V * 2;
+
+            container.style.height = Math.max(600, Math.min(svgH + 40, 900)) + 'px';
+
+            const svg = d3.select('#mindmap').append('svg')
+                .attr('id', 'mindmap-svg')
+                .attr('width', svgW)
+                .attr('height', svgH)
+                .attr('viewBox', `${minY - PAD_H} ${minX - PAD_V} ${svgW} ${svgH}`)
+                .style('background', BG);
+
+            const zoomGroup = svg.append('g').attr('id', 'mindmap-zoom');
+            svg.call(d3.zoom().scaleExtent([0.15, 4]).on('zoom', e => zoomGroup.attr('transform', e.transform)));
+
+            const g = zoomGroup.append('g');
+
+            // Links — horizontal bezier curves
+            g.selectAll('.mm-link')
+                .data(rootHier.links())
+                .enter().append('path')
+                .attr('fill', 'none')
+                .attr('stroke', d => d.target._color || '#334155')
+                .attr('stroke-width', d => d.source.depth === 0 ? 2.5 : 1.5)
+                .attr('stroke-opacity', 0.5)
+                .attr('d', d => {
+                    // In d3 tree: .x = vertical pos, .y = horizontal pos
+                    const x0 = d.source.y, y0 = d.source.x;
+                    const x1 = d.target.y, y1 = d.target.x;
+                    const mx = (x0 + x1) / 2;
+                    return `M${x0},${y0} C${mx},${y0} ${mx},${y1} ${x1},${y1}`;
+                });
+
+            // Nodes
+            g.selectAll('.mm-node')
+                .data(allNodes)
+                .enter().append('g')
+                .attr('transform', d => `translate(${d.y},${d.x})`)
+                .each(function(d) {
+                    const el = d3.select(this);
+                    const label = d.data.label || '';
+                    const isLeft = d._isLeft;
+                    const dir = isLeft ? -1 : 1;
+
+                    if (d.depth === 0) {
+                        // Root: indigo circle + label
+                        el.append('circle').attr('r', 8)
+                            .attr('fill', '#4f46e5').attr('stroke', '#818cf8').attr('stroke-width', 2);
+                        el.append('text').attr('x', 14).attr('dy', '0.35em')
+                            .attr('fill', '#f8fafc').style('font-size', '14px').style('font-weight', '700')
+                            .attr('stroke', BG).attr('stroke-width', 3).attr('paint-order', 'stroke')
+                            .text(label);
+
+                    } else if (d.depth === 1) {
+                        // Branch: colored dot + bold title
+                        el.append('circle').attr('r', 5)
+                            .attr('fill', d._color).attr('stroke', BG).attr('stroke-width', 2);
+                        el.append('text')
+                            .attr('x', dir * 11).attr('dy', '0.35em')
+                            .attr('text-anchor', isLeft ? 'end' : 'start')
+                            .attr('fill', d._color)
+                            .style('font-size', '12.5px').style('font-weight', '700')
+                            .attr('stroke', BG).attr('stroke-width', 3).attr('paint-order', 'stroke')
+                            .text(label);
+
+                    } else {
+                        // Leaf: small dot + wrapped sentence
+                        el.append('circle').attr('r', 2.5)
+                            .attr('fill', d._color).attr('opacity', 0.75);
+
+                        const lines = wrapLabel(label, WRAP_CHARS);
+                        const txt = el.append('text')
+                            .attr('x', dir * 7)
+                            .attr('text-anchor', isLeft ? 'end' : 'start')
+                            .attr('fill', d.depth === 2 ? '#cbd5e1' : '#94a3b8')
+                            .style('font-size', '11px')
+                            .attr('stroke', BG).attr('stroke-width', 2.5).attr('paint-order', 'stroke');
+
+                        lines.forEach((line, i) => {
+                            txt.append('tspan')
+                                .attr('x', dir * 7)
+                                .attr('dy', i === 0 ? '0.35em' : `${LINE_H}px`)
+                                .text(line);
+                        });
+                    }
+                });
+        }
+
+        function downloadMindmapPng() {
+            const svgEl = document.getElementById('mindmap-svg');
+            if (!svgEl) { alert('Generate a summary first.'); return; }
+
+            const vbParts = svgEl.getAttribute('viewBox').split(' ').map(Number);
+            const [, , vw, vh] = vbParts;
+
+            const scale = 2;
+            const canvas = document.createElement('canvas');
+            canvas.width = vw * scale;
+            canvas.height = vh * scale;
+            const ctx = canvas.getContext('2d');
+            ctx.scale(scale, scale);
+            ctx.fillStyle = '#0f172a';
+            ctx.fillRect(0, 0, vw, vh);
+
+            // Clone SVG, reset zoom transform, fix dimensions for full export
+            const clone = svgEl.cloneNode(true);
+            clone.setAttribute('width', vw);
+            clone.setAttribute('height', vh);
+            const zoomG = clone.getElementById('mindmap-zoom');
+            if (zoomG) zoomG.removeAttribute('transform');
+
+            const serializer = new XMLSerializer();
+            let svgStr = serializer.serializeToString(clone);
+            if (!svgStr.includes('xmlns="http://www.w3.org/2000/svg"')) {
+                svgStr = svgStr.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+            }
+
+            const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const img = new Image();
+            img.onload = () => {
+                ctx.drawImage(img, 0, 0, vw, vh);
+                URL.revokeObjectURL(url);
+                const a = document.createElement('a');
+                const titleMatch = targetMarkdown.match(/^# (.+)/m);
+                a.download = (titleMatch ? titleMatch[1].replace(/[^a-z0-9 _-]/gi,'').trim().replace(/\s+/g,'_').slice(0,50) : 'mindmap') + '_mindmap.png';
+                a.href = canvas.toDataURL('image/png');
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            };
+            img.onerror = () => {
+                URL.revokeObjectURL(url);
+                alert('PNG export failed. Try right-clicking the mindmap and saving as image.');
+            };
+            img.src = url;
+        }
+
+        function copyMarkdown() {
+            navigator.clipboard.writeText(targetMarkdown).then(() => {
+                successCard.classList.remove('hidden');
+                setTimeout(() => successCard.classList.add('hidden'), 3000);
+            });
+        }
+
+        function downloadMarkdown() {
+            if (!targetMarkdown) return;
+            const blob = new Blob([targetMarkdown], { type: 'text/markdown;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            // Derive filename from the first heading line, sanitized
+            const titleMatch = targetMarkdown.match(/^# (.+)/m);
+            const filename = titleMatch
+                ? titleMatch[1].replace(/[^a-z0-9 _-]/gi, '').trim().replace(/\s+/g, '_').slice(0, 60) + '.md'
+                : 'summary.md';
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>
