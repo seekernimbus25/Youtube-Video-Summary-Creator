@@ -11,6 +11,9 @@ build/
 *.egg
 *.whl
 
+# Claude/AI tooling
+.claude/
+
 # Environment — NEVER push secrets
 .env
 *.env
