@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+anthropic
+yt-dlp
+youtube-transcript-api
+aiofiles
+python-multipart
+pydantic
+python-dotenv

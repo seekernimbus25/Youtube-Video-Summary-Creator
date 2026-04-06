@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+*.whl
+
+# Environment — NEVER push secrets
+.env
+*.env
+.env.*
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Logs and temp files
+*.log
+*.tmp
+*.bak
+
+# Screenshots extracted by the app (runtime data)
+backend/static/screenshots/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.suo
+*.user
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node (if any)
+node_modules/
+
+# Pydoc output
+*.html
+
+# Temp dirs created by transcript/screenshot service
+tmp/
+temp/
