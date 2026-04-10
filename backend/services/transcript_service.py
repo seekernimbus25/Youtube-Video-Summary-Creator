@@ -5,6 +5,7 @@ import tempfile
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from utils.network import without_proxy_env
 
 logger = logging.getLogger(__name__)
 executor = ThreadPoolExecutor(max_workers=2)
@@ -22,17 +23,19 @@ def _fetch_with_ytdlp(video_url: str, video_id: str) -> str:
         'skip_download': True,
         'writesubtitles': True,
         'writeautomaticsub': True,
-        'subtitleslangs': ['en', 'en-US', 'en-GB'],
+        'subtitleslangs': ['en', 'en-.*', 'en-US', 'en-GB', 'a.en'],
         'subtitlesformat': 'json3',
         'outtmpl': subtitle_path,
         'quiet': True,
         'no_warnings': True,
+        'proxy': '',
     }
 
     import yt_dlp
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([video_url])
+        with without_proxy_env():
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([video_url])
 
         # yt-dlp saves subtitles as {id}.{lang}.json3
         # Look for any subtitle file that was downloaded
@@ -127,35 +130,42 @@ def _parse_srt(content: str) -> str:
 def _fetch_with_transcript_api(video_id: str) -> str:
     """
     Fallback: Use youtube-transcript-api library.
+    Verified to use .fetch() and .list() instance methods in local environment.
     """
     try:
         from youtube_transcript_api import YouTubeTranscriptApi
-        api = YouTubeTranscriptApi()
-
-        # Try instance .fetch() method first (v1.2.4+)
-        if hasattr(api, 'fetch'):
-            data = api.fetch(video_id)
-            return ' '.join([item['text'] for item in data]).replace('\n', ' ')
-
-        # Try instance .list() method
-        if hasattr(api, 'list'):
-            transcript_list = api.list(video_id)
-            transcript = None
+        with without_proxy_env():
+            api = YouTubeTranscriptApi()
+            
+            # 1. Direct fetch (standard for this environment's version)
             try:
-                transcript = transcript_list.find_transcript(['en'])
-            except Exception:
-                for t in transcript_list:
-                    transcript = t
-                    break
-            if transcript:
-                fetched = transcript.fetch()
-                return ' '.join([item['text'] for item in fetched]).replace('\n', ' ')
+                data = api.fetch(video_id)
+                if data:
+                    return ' '.join([item['text'] for item in data]).replace('\n', ' ')
+            except Exception as e:
+                logger.info(f"Direct fetch failed, trying list fallback: {e}")
+
+            # 2. List fallback
+            try:
+                transcript_list = api.list(video_id)
+                # Try finding en manual/auto
+                try:
+                    transcript = transcript_list.find_transcript(['en'])
+                except Exception:
+                    # Just take the first one available
+                    transcript = next(iter(transcript_list))
+                
+                if transcript:
+                    data = transcript.fetch()
+                    return ' '.join([item['text'] for item in data]).replace('\n', ' ')
+            except Exception as e:
+                logger.warning(f"Transcript list lookup failed for {video_id}: {e}")
 
     except Exception as e:
-        logger.warning(f"youtube-transcript-api failed: {e}")
+        logger.warning(f"youtube-transcript-api logic failed for {video_id}: {e}")
         raise
 
-    raise ValueError("youtube-transcript-api could not fetch transcript.")
+    raise ValueError("youtube-transcript-api could not find any compatible transcript.")
 
 
 async def fetch_transcript(video_id: str) -> str:

@@ -1,27 +1,27 @@
 import yt_dlp
 import logging
-from typing import Dict, Any
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from models import Metadata
+from utils.network import without_proxy_env
 
 logger = logging.getLogger(__name__)
+executor = ThreadPoolExecutor(max_workers=2)
 
-async def fetch_video_metadata(video_url: str) -> Metadata:
-    """
-    Fetches video metadata using yt-dlp and returns a formatted Pydantic Metadata model.
-    """
+
+def _fetch_video_metadata_sync(video_url: str) -> Metadata:
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
-        'extract_flat': False, # we need the full info like duration
+        'extract_flat': False,
+        'proxy': '',
     }
-    
-    try:
-        # Wrap the synchronous yt_dlp call
-        # Usually it's fast enough, but we might consider ThreadPoolExecutor if it blocks
+
+    with without_proxy_env():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             logger.info(f"Extracting metadata for {video_url}")
             info = ydl.extract_info(video_url, download=False)
-            
+
             duration_s = info.get('duration', 0)
             mins = duration_s // 60
             secs = duration_s % 60
@@ -34,7 +34,14 @@ async def fetch_video_metadata(video_url: str) -> Metadata:
                 duration_formatted=duration_formatted,
                 thumbnail_url=info.get('thumbnail', '')
             )
-            
+
+async def fetch_video_metadata(video_url: str) -> Metadata:
+    """
+    Fetches video metadata using yt-dlp and returns a formatted Pydantic Metadata model.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(executor, _fetch_video_metadata_sync, video_url)
     except Exception as e:
         logger.error(f"Failed to fetch metadata for {video_url}: {e}")
         raise RuntimeError(f"VIDEO_NOT_FOUND: {str(e)}")

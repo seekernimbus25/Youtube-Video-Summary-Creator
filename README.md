@@ -29,8 +29,8 @@ An AI-powered tool that generates deep, structured summaries of YouTube videos u
 
 1. **Clone the repo**
    ```bash
-   git clone https://github.com/your-username/yt-video-summariser.git
-   cd yt-video-summariser
+   git clone https://github.com/seekernimbus25/youtube-video-summary-creator.git
+   cd youtube-video-summary-creator
    ```
 
 2. **Install Python dependencies**
@@ -39,11 +39,20 @@ An AI-powered tool that generates deep, structured summaries of YouTube videos u
    pip install -r requirements.txt
    ```
 
+   For local testing and CI:
+   ```bash
+   pip install -r requirements-dev.txt
+   ```
+
 3. **Add your API key**
 
    Create a `.env` file inside the `backend/` folder:
    ```
    ANTHROPIC_API_KEY=your_api_key_here
+   SUMMARIZER_API_KEY=optional_shared_api_key
+   ALLOWED_ORIGINS=https://yourdomain.com
+   RATE_LIMIT_MAX_REQUESTS=5
+   RATE_LIMIT_WINDOW_SECONDS=900
    ```
 
 4. **Run the server**
@@ -68,6 +77,8 @@ An AI-powered tool that generates deep, structured summaries of YouTube videos u
 - The video must have captions/subtitles available on YouTube (auto-generated captions work)
 - Screenshot extraction downloads a low-resolution copy of the video temporarily — it is deleted automatically after frames are extracted
 - Claude model used defaults to `claude-haiku-4-5-20251001`. You can override this by setting `CLAUDE_MODEL` in your `.env` file
+
+- Production deployments should set `ALLOWED_ORIGINS` explicitly and use `SUMMARIZER_API_KEY` if the summarize API is not intended to be public
 
 ## Project Structure
 

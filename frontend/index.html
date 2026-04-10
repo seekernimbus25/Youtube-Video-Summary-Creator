@@ -4,260 +4,932 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YouTube Video Summarizer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Lexend:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
     <style>
         :root {
-            --bg-color: #0f172a;
-            --surface: #1e293b;
-            --surface-hover: #334155;
-            --text-primary: #f8fafc;
-            --text-secondary: #94a3b8;
-            --accent: #3b82f6;
-            --accent-hover: #2563eb;
-            --border: #334155;
-            --error: #ef4444;
-            --success: #10b981;
+            --bg-deep: #05060f;
+            --bg-card: rgba(17, 18, 25, 0.7);
+            --accent-primary: #a855f7;
+            --accent-secondary: #7c3aed;
+            --accent-success: #34d399;
+            --accent-info: #38bdf8;
+            --accent-warning: #facc15;
+            --accent-error: #f43f5e;
+            --text-main: #ffffff;
+            --text-muted: #94a3b8;
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --glass-shine: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0) 100%);
         }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
         body {
-            background-color: var(--bg-color);
-            color: var(--text-primary);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-deep);
+            color: var(--text-main);
             line-height: 1.6;
-            margin: 0;
-            padding: 2rem;
+            overflow-x: hidden;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* --- Navigation --- */
+        nav {
+            height: 70px;
+            padding: 0 4rem;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 1000;
+            background: rgba(5, 6, 15, 0.8);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--glass-border);
+        }
+
+        .logo-group {
+            display: flex;
+            flex-direction: column;
+            line-height: 1.1;
+        }
+
+        .logo {
+            font-family: 'Lexend', sans-serif;
+            font-weight: 700;
+            font-size: 1.4rem;
+            letter-spacing: -0.02em;
+            color: #fff;
+            text-decoration: none;
+        }
+
+        .tagline {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .nav-right { display: flex; align-items: center; gap: 1.5rem; }
+        .nav-icon { color: var(--text-muted); font-size: 1.2rem; cursor: pointer; transition: color 0.2s; }
+        .nav-icon:hover { color: #fff; }
+
+        .profile-pic {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: #334155;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        /* --- Hero Section --- */
+        .hero {
+            padding: 4rem 1rem 3rem;
+            text-align: center;
             max-width: 1200px;
             margin: 0 auto;
         }
-        h1, h2, h3 { color: var(--text-primary); }
-        .card {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 12px;
-            padding: 2rem;
+
+        .hero h1 {
+            font-family: 'Lexend', sans-serif;
+            font-size: 3.5rem;
             margin-bottom: 2rem;
+            background: linear-gradient(to bottom, #fff 40%, var(--accent-primary));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            font-weight: 700;
+            letter-spacing: -0.03em;
         }
-        .input-group {
+
+        .search-container {
+            max-width: 650px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--glass-border);
+            padding: 0.4rem;
+            border-radius: 50px;
             display: flex;
+            align-items: center;
             gap: 1rem;
-            margin-bottom: 1rem;
+            box-shadow: 0 20px 50px rgba(0,0,0,0.4);
         }
-        input[type="text"] {
+
+        .search-container input {
             flex: 1;
-            padding: 0.75rem 1rem;
-            border-radius: 8px;
-            border: 1px solid var(--border);
-            background: var(--bg-color);
-            color: var(--text-primary);
+            background: transparent;
+            border: none;
+            color: #fff;
+            padding: 0.75rem 1.5rem;
+            outline: none;
             font-size: 1rem;
         }
-        button {
-            padding: 0.75rem 1.5rem;
-            border-radius: 8px;
-            border: none;
-            background: var(--accent);
+
+        .toggle-group { display: flex; align-items: center; gap: 0.75rem; color: var(--text-muted); font-size: 0.7rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 34px;
+            height: 18px;
+        }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #334155;
+            transition: .4s;
+            border-radius: 20px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 12px; width: 12px;
+            left: 3px; bottom: 3px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        input:checked + .slider { background-color: var(--accent-primary); }
+        input:checked + .slider:before { transform: translateX(16px); }
+
+        .btn-summarize {
+            background: linear-gradient(90deg, #7c3aed, #a855f7);
             color: white;
+            border: none;
+            padding: 0.7rem 1.8rem;
+            border-radius: 40px;
             font-weight: 600;
             cursor: pointer;
-            transition: background 0.2s;
+            transition: all 0.2s;
+            font-size: 0.9rem;
         }
-        button:hover { background: var(--accent-hover); }
-        button:disabled { opacity: 0.5; cursor: not-allowed; }
-        
-        .progress-steps {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 2rem;
-            position: relative;
-        }
-        .step {
+        .btn-summarize:hover { transform: translateY(-1px); box-shadow: 0 5px 20px rgba(124, 58, 237, 0.4); }
+
+        /* --- Main Layout Grid --- */
+        .results-container-main {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
             display: flex;
             flex-direction: column;
-            align-items: center;
-            z-index: 1;
-            color: var(--text-secondary);
+            gap: 2rem;
         }
-        .step.active { color: var(--accent); }
-        .step.completed { color: var(--success); }
-        
 
-        .error-card { border-color: var(--error); color: var(--error); }
-        .success-card { background: var(--success); color: white; display: none; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;}
-        
-        #mindmap {
-            width: 100%;
-            height: 700px;
-            background: var(--bg-color);
-            border-radius: 8px;
-            overflow: hidden;
-            border: 1px solid var(--border);
+        .top-row {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 2rem;
+            align-items: stretch; /* Ensures both cards match height */
         }
-        .screenshot { max-width: 100%; border-radius: 8px; margin-top: 1rem; border: 1px solid var(--border); }
-        .concept-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; }
-        .concept-card { background: var(--bg-color); padding: 1.5rem; border-radius: 8px; border: 1px solid var(--border); }
+
+        .glass-card {
+            background: var(--bg-card);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 1.5rem;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* --- Collapsible Sections --- */
+        details {
+            background: var(--bg-card);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            margin-bottom: 1.5rem;
+            overflow: hidden;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        summary {
+            list-style: none;
+            padding: 1.5rem 2rem;
+            cursor: pointer;
+            font-family: 'Lexend', sans-serif;
+            font-size: 1.25rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            color: #fff;
+            outline: none;
+            user-select: none;
+        }
+
+        summary::-webkit-details-marker { display: none; }
+
+        summary::after {
+            content: "+";
+            font-size: 1.5rem;
+            color: var(--accent-primary);
+            transition: transform 0.3s;
+        }
+
+        details[open] summary::after {
+            content: "−";
+            transform: rotate(90deg);
+        }
+
+        .collapsible-content {
+            padding: 0 2rem 2rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.05);
+            animation: slideDown 0.4s ease-out;
+        }
+
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* --- Insights Styling --- */
+        .insights-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+        }
+
+        .insight-item {
+            display: flex;
+            gap: 1rem;
+            font-size: 0.95rem;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        .insight-number {
+            color: var(--accent-primary);
+            font-weight: 800;
+            font-family: 'Lexend', sans-serif;
+            font-size: 0.8rem;
+            opacity: 0.6;
+        }
+
+        /* --- Concept Cards --- */
+        .concept-card-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 1.5rem;
+            margin-top: 1rem;
+        }
+
+        .concept-premium-card {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 12px;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+            transition: all 0.3s;
+        }
+
+        .concept-premium-card:hover {
+            border-color: rgba(168, 85, 247, 0.3);
+            background: rgba(168, 85, 247, 0.02);
+            transform: translateY(-4px);
+        }
+
+        .concept-title {
+            font-family: 'Lexend', sans-serif;
+            font-weight: 600;
+            color: #fff;
+            font-size: 1.1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .concept-title::before {
+            content: "";
+            width: 4px; height: 16px;
+            background: var(--accent-primary);
+            border-radius: 2px;
+        }
+
+        .concept-section { font-size: 0.85rem; }
+        .concept-label { 
+            color: var(--accent-primary); 
+            font-weight: 700; 
+            text-transform: uppercase; 
+            font-size: 0.65rem; 
+            letter-spacing: 0.05em; 
+            margin-bottom: 0.4rem;
+            display: block;
+        }
+        .concept-text { color: var(--text-muted); line-height: 1.5; }
+
+        /* --- Key Sections Breakdown (Legacy Style, Alchemist Aesthetic) --- */
+        .section-breakdown-item {
+            margin-bottom: 1.5rem;
+            padding-bottom: 1.5rem;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .section-breakdown-item:last-child { border-bottom: none; }
+
+        /* --- Main Layout Grid --- */
+        .results-grid {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem;
+            display: grid;
+            grid-template-columns: 1fr 450px;
+            gap: 2rem;
+        }
+
+        .left-col, .right-col { display: flex; flex-direction: column; gap: 2rem; }
+
+        .glass-card {
+            background: var(--bg-card);
+            border: 1px solid var(--glass-border);
+            border-radius: 16px;
+            padding: 1.5rem;
+            position: relative;
+            overflow: hidden;
+        }
+        .glass-card::before { content: ""; position: absolute; inset: 0; background: var(--glass-shine); pointer-events: none; }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 1.5rem;
+        }
+        .card-header h2 { font-family: 'Lexend', sans-serif; font-size: 1.1rem; font-weight: 600; color: #fff; }
+
+        .pill-tag {
+            background: rgba(168, 85, 247, 0.1);
+            color: var(--accent-primary);
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.65rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        /* --- Mindmap & Concepts --- */
+        .interactive-tag { background: #1e1b4b; color: #818cf8; font-size: 0.6rem; padding: 2px 8px; border-radius: 4px; font-weight: 800; }
+
+        .concepts-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            margin-top: 1rem;
+        }
+        .concept-dot-tag {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid var(--glass-border);
+            border-radius: 30px;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            transition: 0.2s;
+            cursor: pointer;
+        }
+        .concept-dot-tag:hover { background: rgba(255, 255, 255, 0.06); color: #fff; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; opacity: 0.8; }
+
+        /* --- Structured Summary Sidebar --- */
+        .summary-card {
+            padding: 1.5rem;
+            border-left: 2px solid var(--accent-primary);
+            margin-bottom: 1.5rem;
+            background: rgba(255,255,255,0.01);
+            border-radius: 0 12px 12px 0;
+            transition: 0.2s;
+        }
+        .summary-card:hover { background: rgba(255,255,255,0.02); }
+
+        .timestamp-badge {
+            background: rgba(255,255,255,0.05);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        .summary-card h3 { font-size: 1.1rem; margin-bottom: 0.75rem; color: #fff; }
+        .summary-card p { font-size: 0.9rem; color: var(--text-muted); margin-bottom: 1rem; }
+
+        .section-label { font-size: 0.65rem; font-weight: 800; color: var(--accent-primary); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 0.5rem; display: block; }
+
+        .step-list { list-style: none; margin: 1rem 0; }
+        .step-list li {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            font-size: 0.85rem;
+            margin-bottom: 0.6rem;
+            color: var(--text-muted);
+        }
+        .check-circle { 
+            width: 16px; height: 16px; 
+            border-radius: 50%; 
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(168, 85, 247, 0.2);
+            color: var(--accent-primary);
+            font-size: 0.6rem;
+            flex-shrink: 0;
+            margin-top: 2px;
+        }
+
+        .tradeoff { 
+            font-size: 0.8rem; 
+            color: var(--accent-error); 
+            display: flex; 
+            align-items: center; 
+            gap: 0.5rem; 
+            margin-top: 1.25rem; 
+            padding: 0.5rem 0.75rem;
+            background: rgba(244, 63, 94, 0.05);
+            border-radius: 6px;
+        }
+
+        /* --- Comparisons Grid --- */
+        .comparisons-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            max-width: 1400px;
+            margin: 0 auto 2rem;
+            padding: 0 2rem;
+        }
+        .comparison-card {
+            padding: 2rem;
+            text-align: left;
+        }
+        .icon-box {
+            width: 44px; height: 44px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1.5rem;
+            font-size: 1.2rem;
+        }
+
+        /* --- Recommendations --- */
+        .recom-container {
+            display: grid;
+            grid-template-columns: 1fr 500px;
+            gap: 2rem;
+            max-width: 1400px;
+            margin: 2rem auto 4rem;
+            padding: 0 2rem;
+        }
+        .recom-list { display: flex; flex-direction: column; gap: 1rem; }
+        .recom-item {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            padding: 1.5rem;
+        }
+        .icon-circle {
+            width: 44px; height: 44px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .synthesis-card {
+            background: linear-gradient(135deg, rgba(124, 58, 237, 0.08) 0%, rgba(5, 6, 15, 0.4) 100%);
+            border: 1px solid rgba(124, 58, 237, 0.15);
+        }
+
+        /* --- Global App UI Extras --- */
         .hidden { display: none !important; }
-        .stepper-label { margin-top: 0.5rem; font-size: 0.85rem; }
-        .comparison-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.9rem; }
-        .comparison-table th { background: var(--surface-hover); color: var(--accent); text-align: left; padding: 0.6rem 0.9rem; border: 1px solid var(--border); font-weight: 600; }
-        .comparison-table td { padding: 0.6rem 0.9rem; border: 1px solid var(--border); color: var(--text-secondary); vertical-align: top; }
-        .comparison-table tr:nth-child(even) td { background: rgba(255,255,255,0.02); }
-        .keyword-tag { background: var(--surface-hover); color: var(--text-secondary); padding: 0.3rem 0.7rem; border-radius: 20px; font-size: 0.85rem; border: 1px solid var(--border); }
+        .reveal { animation: reveal 0.8s cubic-bezier(0.16, 1, 0.3, 1) both; }
+        @keyframes reveal {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        footer {
+            margin-top: auto;
+            padding: 1rem 4rem; 
+            border-top: 1px solid var(--glass-border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .footer-links { display: flex; gap: 2rem; font-size: 0.85rem; }
+        .footer-links a { 
+            color: var(--text-muted); 
+            text-decoration: none; 
+            transition: color 0.2s; 
+        }
+        .footer-links a:hover { color: #fff; }
+        .footer-links a:visited { color: var(--text-muted); }
+
+        /* Progress Shimmer */
+        .shimmer {
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            background-size: 200% 100%;
+            animation: shimmer 1.5s infinite;
+        }
+        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+
+        /* Screenshot Styling in Side Column */
+        .screenshot-box-mini {
+            margin: 1.5rem 0;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid var(--glass-border);
+        }
+        .screenshot-box-mini img { width: 100%; display: block; }
+        .screenshot-caption-mini {
+            padding: 0.75rem;
+            background: rgba(0,0,0,0.3);
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        #mindmap svg { overflow: visible; }
+
+        .mindmap-controls {
+            position: absolute;
+            bottom: 1rem;
+            right: 1rem;
+            display: flex;
+            gap: 0.5rem;
+            z-index: 10;
+        }
+
+        .map-btn {
+            width: 36px;
+            height: 36px;
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid var(--glass-border);
+            border-radius: 8px;
+            color: #fff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: 0.2s;
+            backdrop-filter: blur(4px);
+        }
+
+        .map-btn:hover { background: var(--accent-primary); border-color: #fff; }
+
+        /* Fullscreen Mindmap */
+        #mindmap:fullscreen {
+            background: var(--bg-deep);
+            padding: 2rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        /* Export Dropdown */
+        .export-group { position: relative; display: inline-block; }
+        .export-menu {
+            position: absolute;
+            bottom: 100%;
+            right: 0;
+            background: #1e1b4b;
+            border: 1px solid var(--glass-border);
+            border-radius: 12px;
+            padding: 0.5rem;
+            display: none;
+            flex-direction: column;
+            gap: 0.25rem;
+            width: 160px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            margin-bottom: 0.75rem;
+            z-index: 2000;
+        }
+        .export-menu.active { display: flex; }
+        .export-menu.top {
+            bottom: auto;
+            top: 100%;
+            margin-bottom: 0;
+            margin-top: 0.75rem;
+        }
+        .export-item:hover { background: rgba(168, 85, 247, 0.15); color: #fff; }
+
+        @media print {
+            :root { color-scheme: light !important; }
+            html, body { background: #fff !important; color: #000 !important; padding: 0 !important; font-size: 10pt; }
+            * { 
+                background-color: #fff !important; 
+                background-image: none !important; 
+                color: #000 !important; 
+                text-shadow: none !important; 
+                box-shadow: none !important; 
+                backdrop-filter: none !important; 
+                -webkit-backdrop-filter: none !important;
+                border-color: #eee !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            .reveal { opacity: 1 !important; transform: none !important; visibility: visible !important; }
+            .nav-icon, .hero, .search-container, .mindmap-controls, footer, .map-btn, .interactive-tag, nav, .progress-card, .btn-summarize, #mindmap, .card-header a, .export-group, .export-menu, #mindmap-card { display: none !important; }
+            
+            #resultsContainer, .results-container-main, .top-row, .glass-card, #videoProfileCard { 
+                display: block !important; 
+                background: #fff !important; 
+                border: none !important; 
+                padding: 0 !important; 
+                margin: 0 !important; 
+                box-shadow: none !important; 
+                width: 100% !important;
+            }
+            
+            #videoProfileThumb { float: left; width: 140px !important; margin-right: 1rem !important; margin-bottom: 0.5rem !important; }
+            #videoProfileTitle { font-size: 1.4rem !important; font-weight: bold; margin-bottom: 0.2rem !important;}
+            #videoProfileMeta { font-size: 0.85rem; margin-bottom: 0.5rem !important; }
+            #videoProfilePitch { font-size: 0.95rem !important; margin-bottom: 1rem !important;}
+            
+            .card-header h2 { font-size: 1.2rem !important; border-bottom: 1px solid #000 !important; margin: 0.5rem 0 0.2rem 0 !important; clear: both; width: 100%; padding-bottom: 0.2rem !important;}
+            .insight-item { margin-bottom: 0.1rem !important; padding-bottom: 0 !important; line-height: 1.2 !important; }
+            .insight-number { font-weight: bold; margin-right: 0.3rem !important; }
+            
+            details { margin-bottom: 0.5rem !important; padding: 0 !important; }
+            summary { font-size: 1.1rem !important; font-weight: bold; border-bottom: 1px solid #ddd !important; margin-bottom: 0.2rem !important; padding-bottom: 0.2rem !important; }
+            
+            .insights-list { margin: 0 !important; padding: 0 !important; list-style: none !important; }
+            .section-breakdown-item { page-break-inside: avoid; border: none !important; border-top: 1px solid #eee !important; padding: 0.3rem 0 !important; margin: 0.3rem 0 !important; }
+            
+            table { border: 1px solid #000; border-collapse: collapse; width: 100%; margin-bottom: 0.5rem !important;}
+            th, td { border: 1px solid #000; padding: 2px 4px !important; }
+            
+            h1, h2, h3, h4 { color: #000 !important; margin: 0.2rem 0 !important; }
+            p, span, li, td, th { color: #000 !important; margin: 0.1rem 0 !important; }
+            .step-list { margin: 0 !important; padding: 0 0 0 1rem !important; }
+            .step-list li { margin: 0 !important; padding: 0 !important; list-style: circle !important; }
+        }
     </style>
 </head>
 <body>
-    <header style="text-align: center; margin-bottom: 3rem;">
-        <h1>YouTube Video Summarizer</h1>
-        <p style="color: var(--text-secondary)">AI-powered deep contextual analysis</p>
-    </header>
+    <nav>
+        <div class="logo-group">
+            <a href="#" class="logo">Youtube Buddy</a>
+            <span class="tagline">Your AI Video Synthesis Companion</span>
+        </div>
+        <div class="nav-right">
+            <a href="https://github.com/seekernimbus25/Youtube-Video-Summary-Creator" target="_blank" class="nav-icon" title="GitHub Repository">
+                <svg height="24" viewBox="0 0 16 16" width="24" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+            </a>
+        </div>
+    </nav>
 
-    <div class="card id-input-card">
-        <form id="submitForm">
-            <div class="input-group">
-                <input type="text" id="urlInput" placeholder="Paste YouTube URL here..." required>
-                <button type="submit" id="submitBtn">Summarize Video</button>
+    <div class="hero">
+        <h1>Transform Watch-time into Knowledge</h1>
+        <div class="search-container">
+            <input type="text" id="videoUrl" placeholder="Enter YouTube URL to distill...">
+            <div class="toggle-group">
+                <span>Shots</span>
+                <label class="switch">
+                    <input type="checkbox" id="screenshotsToggle" checked>
+                    <span class="slider"></span>
+                </label>
             </div>
-            <label style="color: var(--text-secondary); display: flex; align-items: center; gap: 0.5rem; cursor: pointer;">
-                <input type="checkbox" id="screenshotsToggle" checked> Include Inline Screenshots (requires backend ffmpeg support)
-            </label>
-        </form>
+            <button class="btn-summarize" id="summarizeBtn">Distill</button>
+        </div>
+        <p style="margin-top: 1rem; font-size: 0.8rem; color: var(--text-muted); text-align: center;">
+            Don't want to spend credits? <a href="javascript:void(0)" onclick="loadDemo()" style="color: var(--accent-primary); text-decoration: none; font-weight: 600;">Try our Demo →</a>
+        </p>
     </div>
 
-    <div class="card error-card hidden" id="errorCard"></div>
-    <div class="success-card hidden" id="successCard">Copied to clipboard!</div>
-
-    <div class="card hidden" id="progressCard">
-        <h3 id="progressMessage" style="text-align: center; margin-bottom: 2rem;">Initializing...</h3>
-        <!-- Simple Progress UI -->
-        <div style="background: var(--bg-color); border-radius: 8px; height: 8px; width: 100%; overflow: hidden;">
-            <div id="progressBar" style="height: 100%; width: 0%; background: var(--accent); transition: width 0.3s ease;"></div>
+    <!-- Progress State -->
+    <div id="progressCard" class="hidden" style="max-width: 600px; margin: 0 auto; text-align: center; padding: 2rem;">
+        <p id="progressMessage" style="color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem; font-weight: 500;"></p>
+        <div style="width: 100%; height: 6px; background: rgba(255,255,255,0.05); border-radius: 10px; overflow: hidden; position: relative; margin-bottom: 1rem;">
+            <div id="progressBar" style="width: 0%; height: 100%; background: linear-gradient(90deg, #7c3aed, #a855f7); transition: width 0.4s ease-in-out;" class="shimmer"></div>
         </div>
+        <p id="progressPercent" style="font-size: 0.8rem; font-weight: 700; color: var(--accent-primary); letter-spacing: 0.05em;"></p>
     </div>
 
-    <div class="results hidden" id="resultsContainer">
-        <div style="display: flex; justify-content: flex-end; gap: 1rem; margin-bottom: 1rem;">
-            <button onclick="copyMarkdown()">Copy as Markdown</button>
-            <button onclick="downloadMarkdown()" style="background: var(--success);">Download .md</button>
-        </div>
+    <div id="errorCard" class="hidden" style="max-width:600px; margin: 2rem auto; padding: 1.5rem; background: rgba(244, 63, 94, 0.1); border: 1px solid var(--accent-error); border-radius: 16px; color: #fff; text-align: center;"></div>
 
-        <div class="card" id="overviewCard">
-            <h2>Overview</h2>
-            <div id="overviewContent"></div>
-        </div>
-
-        <div class="card" id="mindmapCard">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
-                <h2 style="margin:0;">Knowledge Mindmap</h2>
-                <button onclick="downloadMindmapPng()" style="background:#6d28d9; font-size:0.85rem; padding:0.5rem 1rem;">Download PNG</button>
+    <!-- Results Container -->
+    <div id="resultsContainer" class="hidden">
+        <div class="results-container-main">
+            <!-- Video Profile (Previously missing) -->
+            <div class="glass-card reveal" style="padding: 1rem; margin-bottom: 1rem;" id="videoProfileCard">
+                <div style="display:flex; gap: 2rem; align-items:center; flex-wrap: wrap;">
+                    <div id="videoProfileThumb" style="width: 240px; height: 135px; border-radius: 12px; background: rgba(0,0,0,0.4); overflow:hidden; position:relative;">
+                        <!-- Img or Embed -->
+                    </div>
+                    <div style="flex: 1; min-width: 300px;">
+                        <h1 id="videoProfileTitle" style="font-size: 1.8rem; margin-bottom: 0.5rem; color: #fff;"></h1>
+                        <div id="videoProfileMeta" style="display:flex; gap: 1rem; color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem; font-weight: 500;">
+                            <!-- Channel | Duration -->
+                        </div>
+                        <p id="videoProfilePitch" style="font-size: 1rem; line-height: 1.6; color: var(--text-muted); max-width: 800px;"></p>
+                    </div>
+                </div>
             </div>
-            <div id="mindmap"></div>
-        </div>
 
-        <div class="card" id="keySectionsCard">
-            <h2>Key Sections Breakdown</h2>
-            <div id="keySectionsContent"></div>
-        </div>
-        
-        <div class="card" id="mainPointsCard">
-            <h2>Key Insights</h2>
-            <ul id="mainPointsContent" style="padding-left: 1.5rem; margin-top: 1rem;"></ul>
-        </div>
+            <!-- Top Segment: Mindmap + Insights -->
+            <div class="top-row">
+                <div class="glass-card reveal" id="mindmap-card">
+                    <div class="card-header">
+                        <h2>Structural Mindmap</h2>
+                        <div style="display:flex; gap:0.75rem; align-items:center;">
+                            <span class="interactive-tag">INTERACTIVE</span>
+                            <a href="javascript:void(0)" onclick="downloadMindmapPng()" title="Download Mindmap" style="font-size: 1.1rem; color: var(--text-muted); text-decoration: none;">📥</a>
+                        </div>
+                    </div>
+                    <div id="mindmap" style="height: 450px; background: rgba(0,0,0,0.2); border-radius: 12px; cursor: move; position: relative;">
+                        <div class="mindmap-controls">
+                            <button class="map-btn" onclick="zoomMindmap(1.2)" title="Zoom In">+</button>
+                            <button class="map-btn" onclick="zoomMindmap(0.8)" title="Zoom Out">−</button>
+                            <button class="map-btn" onclick="resetMindmap()" title="Reset View">⊙</button>
+                            <button class="map-btn" onclick="toggleFullscreen()" title="Fullscreen">⛶</button>
+                        </div>
+                    </div>
+                </div>
 
-        <div class="card" id="conceptsCard">
-            <h2>Important Concepts Explained</h2>
-            <div class="concept-grid" id="conceptsContent"></div>
-        </div>
+                <div class="glass-card reveal">
+                    <div class="card-header">
+                        <h2>Key Insights</h2>
+                        <div class="export-group">
+                            <div style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;" onclick="toggleExport('exportMenuTop', event)">
+                                <div class="nav-icon" title="Download Distillation" style="font-size: 1.1rem;">📥</div>
+                            </div>
+                            <div class="export-menu top" id="exportMenuTop">
+                                <div class="export-item" onclick="downloadSummary('md')">📄 Markdown (.md)</div>
+                                <div class="export-item" onclick="downloadSummary('docx')">📘 Word Doc (.docx)</div>
+                                <div class="export-item" onclick="downloadSummary('pdf')">📕 PDF Document (.pdf)</div>
+                            </div>
+                        </div>
+                    </div>
+                    <ul class="insights-list" id="mainPointsContent">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
+            </div>
 
-        <div class="card hidden" id="comparisonCard">
-            <h2>Comparison</h2>
-            <div id="comparisonContent" style="overflow-x: auto;"></div>
-        </div>
+            <!-- Segment: Key Sections (Collapsible) -->
+            <details open class="reveal" style="animation-delay: 0.2s;">
+                <summary>Key Sections Breakdown</summary>
+                <div class="collapsible-content" id="keySectionsContent">
+                    <!-- Populated by JS -->
+                </div>
+            </details>
 
-        <div class="card hidden" id="recommendationsCard">
-            <h2>Practical Recommendations</h2>
-            <ul id="recommendationsContent" style="padding-left: 1.5rem; margin-top: 1rem;"></ul>
-        </div>
+            <!-- Segment: Important Concepts (Collapsible) -->
+            <details class="reveal" style="animation-delay: 0.3s;">
+                <summary>Important Concepts</summary>
+                <div class="collapsible-content">
+                    <div class="concept-card-grid" id="conceptsContent">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+            </details>
 
-        <div class="card hidden" id="conclusionCard">
-            <h2>Conclusion</h2>
-            <p id="conclusionContent" style="line-height: 1.8; color: var(--text-secondary);"></p>
-        </div>
+            <!-- Segment: Comparison (Collapsible) -->
+            <details class="reveal" id="comparisonSection" style="animation-delay: 0.4s;">
+                <summary>Deep Comparison Table</summary>
+                <div class="collapsible-content" id="comparisonContent" style="overflow-x: auto;">
+                    <!-- Populated by JS -->
+                </div>
+            </details>
 
-        <div class="card hidden" id="keywordsCard">
-            <h2>Keywords</h2>
-            <div id="keywordsContent" style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 1rem;"></div>
-        </div>
+            <!-- Segment: Recommendations (Collapsible) -->
+            <details class="reveal" id="recommendationsSection" style="animation-delay: 0.5s;">
+                <summary>Practical Recommendations</summary>
+                <div class="collapsible-content">
+                    <ul class="insights-list" id="recommendationsContent" style="gap: 1rem;">
+                        <!-- Populated by JS -->
+                    </ul>
+                </div>
+            </details>
 
+            <!-- Segment: Conclusion (Collapsible) -->
+            <details class="reveal" id="conclusionSection" style="animation-delay: 0.6s;">
+                <summary>Strategic Synthesis</summary>
+                <div class="collapsible-content">
+                    <p id="conclusionContent" style="color: var(--text-muted); line-height: 1.8; font-size: 1.05rem; white-space: pre-wrap;"></p>
+                </div>
+            </details>
+        </div>
     </div>
 
+    <footer>
+        <div>
+            <p style="font-family: 'Lexend', sans-serif; font-weight: 700; font-size: 1.2rem; margin-bottom: 0.4rem; color: #fff;">Youtube Buddy</p>
+            <p style="font-size: 0.65rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.12em; font-weight: 600;">Intelligence Distillation Platform</p>
+        </div>
+        <div class="footer-links">
+            <a href="#">Privacy Policy</a>
+            <a href="#">Terms & Conditions</a>
+        </div>
+        <div style="display:flex; gap: 1.5rem; align-items: center;">
+            <div class="export-group">
+                <div class="nav-icon" title="Download Distillation" id="exportBtn" onclick="toggleExport('exportMenu', event)">📥</div>
+                <div class="export-menu" id="exportMenu">
+                    <div class="export-item" onclick="downloadSummary('md')">📄 Markdown (.md)</div>
+                    <div class="export-item" onclick="downloadSummary('docx')">📘 Word Doc (.docx)</div>
+                    <div class="export-item" onclick="downloadSummary('pdf')">📕 PDF Document (.pdf)</div>
+                </div>
+            </div>
+        </div>
+    </footer>
     <script>
-        const form = document.getElementById('submitForm');
-        const submitBtn = document.getElementById('submitBtn');
-        const urlInput = document.getElementById('urlInput');
+        const summarizeBtn = document.getElementById('summarizeBtn');
+        const videoUrlInput = document.getElementById('videoUrl');
         const screenshotsToggle = document.getElementById('screenshotsToggle');
         const progressCard = document.getElementById('progressCard');
         const progressBar = document.getElementById('progressBar');
+        const progressPercent = document.getElementById('progressPercent');
+        const progressMessage = document.getElementById('progressMessage');
         const errorCard = document.getElementById('errorCard');
         const resultsContainer = document.getElementById('resultsContainer');
-        const successCard = document.getElementById('successCard');
         
         let targetMarkdown = "";
 
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const url = urlInput.value;
+        function safeText(value) {
+            return String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
+
+        function sanitizeUrl(value) {
+            const raw = String(value ?? '').trim();
+            if (!raw || raw.startsWith('javascript:')) return '';
+            if (raw.startsWith('/static/')) return raw;
+            try { return new URL(raw, window.location.origin).href; } catch (_) { return ''; }
+        }
+
+        function loadDemo() {
+            videoUrlInput.value = "https://www.youtube.com/watch?v=demo";
+            summarizeBtn.click();
+        }
+
+        summarizeBtn.addEventListener('click', async () => {
+            const url = videoUrlInput.value.trim();
             if (!url) return;
 
-            // Reset UI
             errorCard.classList.add('hidden');
-            successCard.classList.add('hidden');
             resultsContainer.classList.add('hidden');
             progressCard.classList.remove('hidden');
-            submitBtn.disabled = true;
-            document.getElementById('progressMessage').innerText = "Connecting...";
+            summarizeBtn.disabled = true;
+
             progressBar.style.width = "0%";
+            progressPercent.innerText = "0%";
+            progressMessage.innerText = "Connecting to Knowledge Engine...";
 
             try {
                 const response = await fetch('/api/summarize', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url: url, include_screenshots: screenshotsToggle.checked })
+                    body: JSON.stringify({ url, include_screenshots: screenshotsToggle.checked })
                 });
 
-                if (!response.ok) throw new Error("Network response was not ok");
+                if (!response.ok) throw new Error("Synthesis service temporarily unavailable.");
 
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
+                let buffer = '';
 
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-
-                    const chunk = decoder.decode(value, { stream: true });
-                    const lines = chunk.split('\n\n');
-                    
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
+                    buffer += decoder.decode(value, { stream: true });
+                    const parts = buffer.split('\n\n');
+                    buffer = parts.pop();
+                    for (const p of parts) {
+                        if (p.startsWith('data: ')) {
                             try {
-                                const data = JSON.parse(line.slice(6));
+                                const data = JSON.parse(p.slice(6));
                                 handleSSE(data);
-                            } catch (parseErr) {
-                                console.error("JSON parse error on SSE stream", parseErr, line);
-                            }
+                            } catch (e) {}
                         }
                     }
                 }
             } catch (err) {
                 showError("CONNECTION_ERROR", err.message);
             } finally {
-                submitBtn.disabled = false;
-                setTimeout(() => { progressCard.classList.add('hidden'); }, 1000);
+                summarizeBtn.disabled = false;
+                setTimeout(() => progressCard.classList.add('hidden'), 1000);
             }
         });
 
         function handleSSE(data) {
             if (data.type === 'progress') {
-                document.getElementById('progressMessage').innerText = data.message;
-                const percent = (data.step / data.total_steps) * 100;
-                progressBar.style.width = `${percent}%`;
+                progressMessage.innerText = data.message;
+                const p = Math.round((data.step / data.total_steps) * 100);
+                progressBar.style.width = `${p}%`;
+                progressPercent.innerText = `${p}%`;
             } else if (data.type === 'result') {
                 renderResults(data.data);
             } else if (data.type === 'error') {
@@ -266,174 +938,151 @@
         }
 
         function showError(code, msg) {
-            errorCard.innerHTML = `<strong>Error: [${code}]</strong> <p>${msg}</p>`;
+            errorCard.innerHTML = `<strong>Synthesis Interrupted:</strong> ${msg}`;
             errorCard.classList.remove('hidden');
-            resultsContainer.classList.add('hidden');
             progressCard.classList.add('hidden');
         }
 
+        let currentData = null;
+
         function renderResults(data) {
+            currentData = data;
+            const resultsContainer = document.getElementById('resultsContainer');
             resultsContainer.classList.remove('hidden');
-            
-            // Render Overview
-            const ov = data.summary.video_overview;
-            document.getElementById('overviewContent').innerHTML = `
-                <div style="display: flex; gap: 2rem; align-items: start;">
-                    ${data.metadata.thumbnail_url ? `<img src="${data.metadata.thumbnail_url}" style="max-width:200px; border-radius: 8px; flex-shrink:0;">` : ''}
-                    <div>
-                        <h3 style="margin-top:0">${ov.title}</h3>
-                        <p style="margin: 0.5rem 0"><strong style="color:var(--accent)">Channel:</strong> ${ov.channel}</p>
-                        <p style="margin: 0.5rem 0"><strong style="color:var(--accent)">Duration:</strong> ${ov.duration}</p>
-                        <p style="margin: 0.5rem 0"><strong style="color:var(--accent)">Topic:</strong> ${ov.main_topic}</p>
-                        ${ov.elevator_pitch ? `<p style="margin-top:1rem; padding: 1rem; background: var(--bg-color); border-left: 3px solid var(--accent); border-radius: 4px; color: var(--text-secondary);">${ov.elevator_pitch}</p>` : ''}
-                    </div>
-                </div>
+            resultsContainer.scrollIntoView({ behavior: 'smooth' });
+
+            const m = data.metadata;
+            const s = data.summary;
+
+            // 0. Update Video Profile
+            document.getElementById('videoProfileThumb').innerHTML = `
+                <img src="${sanitizeUrl(m.thumbnail_url)}" style="width:100%; height:100%; object-fit:cover;">
+                <div style="position:absolute; bottom:8px; right:8px; background:rgba(0,0,0,0.8); padding:2px 6px; border-radius:4px; font-size:10px; color:#fff;">${m.duration_formatted}</div>
             `;
-            
-            // Build key sections with inline screenshots
-            const sections = data.summary.key_sections;
-            const usedScreenshots = new Set();
-            const ksHtml = sections.map((sec, idx) => {
-                const secStart = sec.timestamp_seconds || 0;
-                const secEnd = (idx + 1 < sections.length)
-                    ? (sections[idx + 1].timestamp_seconds || secStart + 120)
-                    : Infinity;
-                const secTitleLower = sec.title ? sec.title.trim().toLowerCase() : '';
+            document.getElementById('videoProfileTitle').innerText = m.title;
+            document.getElementById('videoProfileMeta').innerText = `${m.channel} • ${m.duration_formatted}`;
+            document.getElementById('videoProfilePitch').innerText = s.video_overview.elevator_pitch;
 
-                // 1st priority: exact section_title match (AI links screenshot to a named section)
-                let shot = data.screenshots.find(s =>
-                    !usedScreenshots.has(s.seconds) &&
-                    s.section_title && secTitleLower &&
-                    s.section_title.trim().toLowerCase() === secTitleLower
-                );
+            // 1. Key Insights (Alongside Mindmap)
+            const insights = s.key_insights || s.main_points || [];
+            document.getElementById('mainPointsContent').innerHTML = insights.map((insight, i) => `
+                <li class="insight-item">
+                    <span class="insight-number">${String(i + 1).padStart(2, '0')}</span>
+                    <span>${safeText(insight)}</span>
+                </li>
+            `).join('');
 
-                // 2nd priority: screenshot timestamp falls within this section's time range
-                if (!shot) {
-                    shot = data.screenshots.find(s =>
-                        !usedScreenshots.has(s.seconds) &&
-                        s.seconds >= secStart && s.seconds < secEnd
-                    );
-                }
+            // 2. Key Sections Breakdown
+            const usedShots = new Set();
+            document.getElementById('keySectionsContent').innerHTML = s.key_sections.map((sec, i) => {
+                const start = sec.timestamp_seconds || 0;
+                const end = (i + 1 < s.key_sections.length) ? (s.key_sections[i+1].timestamp_seconds || start + 120) : Infinity;
+                
+                const sectionShots = data.screenshots.filter(sh => 
+                    !usedShots.has(sh.seconds) && 
+                    ((sh.section_title && sec.title && sh.section_title.toLowerCase() === sec.title.toLowerCase()) || 
+                     (sh.seconds >= start && sh.seconds < end))
+                ).slice(0, 2);
+                
+                sectionShots.forEach(sh => usedShots.add(sh.seconds));
 
-                if (shot) usedScreenshots.add(shot.seconds);
-                const imgHtml = shot ? `
-                    <div style="margin: 1rem 0;">
-                        <img src="${shot.url}" class="screenshot" alt="${shot.caption}">
-                        <p style="font-size:0.85rem; color:var(--text-secondary); text-align:center; margin-top:0.5rem;">${shot.caption} [${shot.timestamp_formatted}]</p>
-                    </div>
-                ` : '';
-                const stepsHtml = sec.steps && sec.steps.length ? `
-                    <div style="margin: 0.75rem 0;">
-                        <p style="font-size:0.85rem; font-weight:600; color: var(--accent); margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.05em;">Steps</p>
-                        <ol style="margin: 0; padding-left: 1.4rem; color: var(--text-secondary); font-size: 0.95rem;">
-                            ${sec.steps.map(s => `<li style="margin-bottom:0.35rem;">${s}</li>`).join('')}
-                        </ol>
-                    </div>
-                ` : '';
-                const subPointsHtml = sec.sub_points && sec.sub_points.length ? `
-                    <ul style="margin: 0.5rem 0 0.75rem 1.25rem; padding: 0; color: var(--text-secondary); font-size: 0.95rem;">
-                        ${sec.sub_points.map(p => `<li style="margin-bottom:0.3rem;">${p}</li>`).join('')}
-                    </ul>
-                ` : '';
-                const tradeOffsHtml = sec.trade_offs && sec.trade_offs.length ? `
-                    <div style="margin: 0.75rem 0;">
-                        <p style="font-size:0.85rem; font-weight:600; color: #ef4444; margin-bottom: 0.4rem; text-transform: uppercase; letter-spacing: 0.05em;">Trade-offs</p>
-                        <ul style="margin: 0; padding-left: 1.4rem; color: var(--text-secondary); font-size: 0.9rem;">
-                            ${sec.trade_offs.map(t => `<li style="margin-bottom:0.3rem;">${t}</li>`).join('')}
-                        </ul>
-                    </div>
-                ` : '';
-                const notableHtml = sec.notable_detail ? `
-                    <div style="margin: 0.75rem 0; padding: 0.6rem 1rem; background: var(--bg-color); border-left: 3px solid #f59e0b; border-radius: 4px; font-size: 0.9rem; color: var(--text-secondary);">
-                        <strong style="color: #f59e0b;">Notable:</strong> ${sec.notable_detail}
-                    </div>
-                ` : '';
                 return `
-                    <div style="margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border);">
-                        <h3 style="color: var(--accent); margin-bottom: 0.5rem;">[${sec.timestamp}] ${sec.title}</h3>
-                        <p style="margin-bottom: 0.5rem; line-height: 1.7;">${sec.description}</p>
-                        ${subPointsHtml}
-                        ${stepsHtml}
-                        ${tradeOffsHtml}
-                        ${notableHtml}
-                        ${imgHtml}
+                    <div class="section-breakdown-item">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem;">
+                            <span class="section-label">Segment ${i + 1}</span>
+                            <span class="timestamp-badge">${safeText(sec.timestamp)}</span>
+                        </div>
+                        <h3 style="font-family: 'Lexend', sans-serif; margin-bottom: 0.75rem; color: #fff;">${safeText(sec.title)}</h3>
+                        <p style="color: var(--text-muted); margin-bottom: 1.5rem; line-height: 1.7;">${safeText(sec.description)}</p>
+                        
+                        ${sec.steps ? `
+                            <ul class="step-list">
+                                ${sec.steps.map(step => `<li><span class="check-circle">✓</span> ${safeText(step)}</li>`).join('')}
+                            </ul>
+                        ` : ''}
+
+                        ${sec.trade_offs && sec.trade_offs.length ? `
+                            <div class="tradeoff">⚠️ <strong>Trade-off:</strong> ${safeText(sec.trade_offs[0])}</div>
+                        ` : ''}
+
+                        ${sec.notable_detail ? `
+                            <div style="margin-top: 1rem; padding: 1rem; background: rgba(56, 189, 248, 0.05); border-left: 3px solid var(--accent-info); border-radius: 4px; font-size: 0.9rem;">
+                                <strong style="color: var(--accent-info);">NOTABLE:</strong> ${safeText(sec.notable_detail)}
+                            </div>
+                        ` : ''}
+
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1rem; margin-top: 1.5rem;">
+                            ${sectionShots.map(sh => `
+                                <div class="screenshot-box-mini">
+                                    <img src="${sanitizeUrl(sh.url)}" alt="Context">
+                                    <div class="screenshot-caption-mini">${safeText(sh.caption)}</div>
+                                </div>
+                            `).join('')}
+                        </div>
                     </div>
                 `;
             }).join('');
-            document.getElementById('keySectionsContent').innerHTML = ksHtml;
 
-            // Key Insights list
-            const insights = data.summary.key_insights || data.summary.main_points || [];
-            document.getElementById('mainPointsContent').innerHTML = insights.map(p => `<li style="margin-bottom:0.5rem;">${p}</li>`).join('');
-
-            // Concepts grid
-            const concHtml = data.summary.important_concepts.map(c => `
-                <div class="concept-card">
-                    <h3 style="margin-top:0; color: var(--text-primary);">&#10024; ${c.concept}</h3>
-                    <p style="color: var(--text-secondary); margin-bottom: 0.75rem;">${c.explanation}</p>
-                    ${c.why_it_matters ? `<p style="font-size:0.9rem; color: var(--accent); margin-bottom: 0.5rem;"><strong>Why it matters:</strong> ${c.why_it_matters}</p>` : ''}
-                    ${c.example_from_video ? `<p style="font-size:0.85rem; color: #f59e0b; margin: 0; padding: 0.5rem 0.75rem; background: rgba(245,158,11,0.08); border-radius: 4px;"><strong>In the video:</strong> ${c.example_from_video}</p>` : ''}
+            // 3. Important Concepts (Cards)
+            document.getElementById('conceptsContent').innerHTML = s.important_concepts.map(c => `
+                <div class="concept-premium-card">
+                    <h3 class="concept-title">${safeText(c.concept)}</h3>
+                    <div class="concept-section">
+                        <span class="concept-label">About It</span>
+                        <p class="concept-text">${safeText(c.explanation)}</p>
+                    </div>
+                    ${c.why_it_matters ? `
+                        <div class="concept-section">
+                            <span class="concept-label">Why it Matters</span>
+                            <p class="concept-text">${safeText(c.why_it_matters)}</p>
+                        </div>
+                    ` : ''}
+                    ${c.example_from_video ? `
+                        <div class="concept-section">
+                            <span class="concept-label">In the Video</span>
+                            <p class="concept-text" style="font-style: italic; opacity: 0.8;">"${safeText(c.example_from_video)}"</p>
+                        </div>
+                    ` : ''}
                 </div>
             `).join('');
-            document.getElementById('conceptsContent').innerHTML = concHtml;
 
-            // Comparison table
-            const ct = data.summary.comparison_table;
-            if (ct && ct.applicable && ct.headers && ct.headers.length) {
-                document.getElementById('comparisonCard').classList.remove('hidden');
-                const headerHtml = ct.headers.map(h => `<th>${h}</th>`).join('');
-                const rowsHtml = ct.rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('');
-                document.getElementById('comparisonContent').innerHTML = `<table class="comparison-table"><thead><tr>${headerHtml}</tr></thead><tbody>${rowsHtml}</tbody></table>`;
+            // 4. Comparison Table
+            const ct = s.comparison_table;
+            if (ct && ct.applicable && ct.rows && ct.rows.length) {
+                document.getElementById('comparisonSection').classList.remove('hidden');
+                const head = `<thead><tr>${ct.headers.map(h => `<th style="text-align:left; padding:1rem; color:var(--accent-primary); border-bottom:1px solid rgba(255,255,255,0.1);">${safeText(h)}</th>`).join('')}</tr></thead>`;
+                const body = `<tbody>${ct.rows.map(r => `<tr>${r.map(c => `<td style="padding:1rem; border-bottom:1px solid rgba(255,255,255,0.05); font-size:0.9rem; color:var(--text-muted);">${safeText(c)}</td>`).join('')}</tr>`).join('')}</tbody>`;
+                document.getElementById('comparisonContent').innerHTML = `<table style="width:100%; border-collapse:collapse;">${head}${body}</table>`;
+            } else {
+                document.getElementById('comparisonSection').classList.add('hidden');
             }
 
-            // Practical recommendations
-            const recs = data.summary.practical_recommendations || [];
+            // 5. Recommendations
+            const recs = s.practical_recommendations || [];
             if (recs.length) {
-                document.getElementById('recommendationsCard').classList.remove('hidden');
-                document.getElementById('recommendationsContent').innerHTML = recs.map(r => `<li style="margin-bottom:0.5rem;">${r}</li>`).join('');
+                document.getElementById('recommendationsSection').classList.remove('hidden');
+                document.getElementById('recommendationsContent').innerHTML = recs.map(r => `
+                    <li class="insight-item">
+                        <span style="color:var(--accent-success); font-weight:bold;">→</span>
+                        <span>${safeText(r)}</span>
+                    </li>
+                `).join('');
+            } else {
+                document.getElementById('recommendationsSection').classList.add('hidden');
             }
 
-            // Conclusion
-            if (data.summary.conclusion) {
-                document.getElementById('conclusionCard').classList.remove('hidden');
-                document.getElementById('conclusionContent').textContent = data.summary.conclusion;
+            // 6. Conclusion
+            if (s.conclusion) {
+                document.getElementById('conclusionSection').classList.remove('hidden');
+                document.getElementById('conclusionContent').innerText = s.conclusion;
+            } else {
+                document.getElementById('conclusionSection').classList.add('hidden');
             }
 
-            // Keywords
-            const kws = data.summary.keywords || [];
-            if (kws.length) {
-                document.getElementById('keywordsCard').classList.remove('hidden');
-                document.getElementById('keywordsContent').innerHTML = kws.map(k => `<span class="keyword-tag">${k}</span>`).join('');
-            }
-
-            // Render Mindmap
             renderMindmap(data.mindmap);
 
-            // Assemble Markdown block (matches example summary format)
-            const insightsList = data.summary.key_insights || data.summary.main_points || [];
-            const sectionsMarkdown = data.summary.key_sections.map(s => {
-                let md = `### [${s.timestamp}] ${s.title}\n\n${s.description}`;
-                if (s.sub_points && s.sub_points.length) md += '\n\n' + s.sub_points.map(p => '- ' + p).join('\n');
-                if (s.steps && s.steps.length) md += '\n\n**Steps:**\n' + s.steps.map((st, i) => `${i+1}. ${st}`).join('\n');
-                if (s.trade_offs && s.trade_offs.length) md += '\n\n**Trade-offs:**\n' + s.trade_offs.map(t => '- ' + t).join('\n');
-                if (s.notable_detail) md += `\n\n> **Notable:** ${s.notable_detail}`;
-                return md;
-            }).join('\n\n---\n\n');
-            const conceptsMarkdown = data.summary.important_concepts.map(c => {
-                let md = `### ${c.concept}\n\n${c.explanation}`;
-                if (c.why_it_matters) md += `\n\n**Why it matters:** ${c.why_it_matters}`;
-                if (c.example_from_video) md += `\n\n**In the video:** ${c.example_from_video}`;
-                return md;
-            }).join('\n\n');
-            let compTableMarkdown = '';
-            if (ct && ct.applicable && ct.headers && ct.headers.length) {
-                const sep = ct.headers.map(() => '---').join(' | ');
-                compTableMarkdown = `\n\n## Comparison\n\n| ${ct.headers.join(' | ')} |\n| ${sep} |\n` + ct.rows.map(r => `| ${r.join(' | ')} |`).join('\n');
-            }
-            const recsMarkdown = recs.length ? `\n\n## Practical Recommendations\n\n${recs.map(r => '- ' + r).join('\n')}` : '';
-            const conclusionMarkdown = data.summary.conclusion ? `\n\n## Conclusion\n\n${data.summary.conclusion}` : '';
-            const kwMarkdown = kws.length ? `\n\n## Keywords\n\n${kws.join(', ')}` : '';
-            targetMarkdown = `# ${ov.title}\n\n**Channel:** ${ov.channel} | **Duration:** ${ov.duration}\n\n> ${ov.elevator_pitch || ov.main_topic}\n\n---\n\n## Key Insights\n\n${insightsList.map(p => '- ' + p).join('\n')}\n\n---\n\n## Key Sections\n\n${sectionsMarkdown}\n\n---\n\n## Important Concepts\n\n${conceptsMarkdown}${compTableMarkdown}${recsMarkdown}${conclusionMarkdown}${kwMarkdown}`;
+            // Markdown Reconstruction
+            targetMarkdown = `# ${s.video_overview.title}\n\n${s.video_overview.elevator_pitch}\n\n## Insights\n${insights.map(i => '- ' + i).join('\n')}\n\n## Conclusion\n${s.conclusion}`;
         }
 
         function wrapLabel(label, maxChars) {
@@ -449,213 +1098,311 @@
             return lines;
         }
 
+        let currentZoom = null;
+
+        // Export Dropdown Toggle
+        function toggleExport(id, event) {
+            event.stopPropagation();
+            const menu = document.getElementById(id);
+            // Close others
+            document.querySelectorAll('.export-menu').forEach(m => {
+                if (m.id !== id) m.classList.remove('active');
+            });
+            menu.classList.toggle('active');
+        }
+
+        document.addEventListener('click', () => {
+            document.querySelectorAll('.export-menu').forEach(m => m.classList.remove('active'));
+        });
+
+        function downloadSummary(format) {
+            const results = document.getElementById('resultsContainer');
+            if (results.classList.contains('hidden')) return alert("Please distill a video first.");
+            
+            const title = document.querySelector('nav .logo').innerText + "_Distillation";
+            const videoTitle = document.querySelector('h1').innerText;
+
+            // 1. Gather Data for MD/DOCX
+            const s = currentData.summary;
+            const mindmapSvg = document.getElementById('mindmap-svg');
+            
+            async function getFullContent(outFormat) {
+                if (outFormat === 'docx' || outFormat === 'pdf') {
+                    const m = currentData.metadata;
+                    let html = `<div style="margin-bottom:2rem; overflow:hidden;">`;
+                    html += `<img src="${m.thumbnail_url}" style="width:180px; float:left; margin-right:2rem; border-radius:8px;">`;
+                    html += `<h1 style="margin:0; font-size:1.8rem;">${safeText(m.title)}</h1>`;
+                    html += `<p style="margin:0.5rem 0; color:#666;">${safeText(m.channel)} • ${m.duration_formatted}</p>`;
+                    html += `<p style="margin:0; font-style:italic;">${safeText(s.video_overview.elevator_pitch)}</p>`;
+                    html += `</div><div style="clear:both;"></div>`;
+                    
+                    html += `<h2>LIGHTNING INSIGHTS</h2><ul>`;
+                    (s.key_insights || s.main_points || []).forEach(ins => html += `<li>${safeText(ins)}</li>`);
+                    html += `</ul>`;
+
+                    html += `<h2>SECTIONS BREAKDOWN</h2>`;
+                    s.key_sections.forEach((sec, i) => {
+                        html += `<h3>${i+1}. ${safeText(sec.title)} (${safeText(sec.timestamp)})</h3>`;
+                        html += `<p>${safeText(sec.description)}</p>`;
+                        if(sec.steps && sec.steps.length) {
+                            html += `<ul>`;
+                            sec.steps.forEach(st => html += `<li>✓ ${safeText(st)}</li>`);
+                            html += `</ul>`;
+                        }
+                        if(sec.trade_offs && sec.trade_offs.length) html += `<p><em>Trade-off: ${safeText(sec.trade_offs[0])}</em></p>`;
+                        if(sec.notable_detail) html += `<p><em>Notable: ${safeText(sec.notable_detail)}</em></p>`;
+                    });
+
+                    html += `<h2>CORE CONCEPTS</h2><ul>`;
+                    s.important_concepts.forEach(c => {
+                        let li = `<strong>${safeText(c.concept)}:</strong> ${safeText(c.explanation)} `;
+                        if(c.why_it_matters) li += `<em>(Significance: ${safeText(c.why_it_matters)})</em>`;
+                        html += `<li>${li}</li>`;
+                    });
+                    html += `</ul>`;
+
+                    const ct = s.comparison_table;
+                    if(ct && ct.applicable) {
+                        html += `<h2>COMPARISON ANALYSIS</h2>`;
+                        html += `<table border="1" style="width:100%; border-collapse:collapse; margin-bottom:1rem;"><thead><tr>`;
+                        ct.headers.forEach(h => html += `<th style="padding:0.4rem; background:#f5f5f5; text-align:left;">${safeText(h)}</th>`);
+                        html += `</tr></thead><tbody>`;
+                        ct.rows.forEach(row => {
+                            html += `<tr>`;
+                            row.forEach(c => html += `<td style="padding:0.4rem;">${safeText(c)}</td>`);
+                            html += `</tr>`;
+                        });
+                        html += `</tbody></table>`;
+                    }
+
+                    if(s.practical_recommendations && s.practical_recommendations.length) {
+                        html += `<h2>RECOMMENDATIONS</h2><ul>`;
+                        s.practical_recommendations.forEach(r => html += `<li>${safeText(r)}</li>`);
+                        html += `</ul>`;
+                    }
+
+                    html += `<h2>CONCLUSION</h2><p>${safeText(s.conclusion)}</p>`;
+                    return html;
+
+                } else {
+                    // Standard Markdown
+                    let md = `# ${s.video_overview.title}\n\n`;
+                    md += `**OVERVIEW:** ${s.video_overview.elevator_pitch}\n\n`;
+                    
+                    md += `## LIGHTNING INSIGHTS\n`;
+                    (s.key_insights || s.main_points || []).forEach((ins, i) => md += `${i+1}. ${ins}\n`);
+                    md += `\n`;
+
+                    md += `## SECTIONS BREAKDOWN\n`;
+                    s.key_sections.forEach((sec, i) => {
+                        md += `### ${i+1}. ${sec.title} (${sec.timestamp})\n`;
+                        md += `${sec.description}\n`;
+                        if(sec.steps) sec.steps.forEach(st => md += `✓ ${st}  \n`);
+                        if(sec.trade_offs) md += `*Trade-off: ${sec.trade_offs[0]}*\n`;
+                        if(sec.notable_detail) md += `*Notable: ${sec.notable_detail}*\n`;
+                        md += `\n`;
+                    });
+
+                    md += `## CORE CONCEPTS\n`;
+                    s.important_concepts.forEach(c => {
+                        md += `**${c.concept}:** ${c.explanation} `;
+                        if(c.why_it_matters) md += `*(Significance: ${c.why_it_matters})* `;
+                        md += `\n`;
+                    });
+                    md += `\n`;
+
+                    const ct = s.comparison_table;
+                    if(ct && ct.applicable) {
+                        md += `## COMPARISON ANALYSIS\n\n`;
+                        md += `| ${ct.headers.join(' | ')} |\n`;
+                        md += `| ${ct.headers.map(() => '---').join(' | ')} |\n`;
+                        ct.rows.forEach(row => md += `| ${row.join(' | ')} |\n`);
+                        md += `\n`;
+                    }
+
+                    md += `## RECOMMENDATIONS\n`;
+                    (s.practical_recommendations || []).forEach(r => md += `• ${r}\n`);
+                    md += `\n`;
+
+                    md += `## CONCLUSION\n${s.conclusion}\n`;
+                    return md.replace(/\n{3,}/g, '\n\n');
+                }
+            }
+
+            if (format === 'md') {
+                getFullContent('md').then(content => {
+                    const blob = new Blob([content], { type: 'text/markdown' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob); a.download = `${title}.md`; a.click();
+                });
+            } else if (format === 'docx') {
+                getFullContent('docx').then(htmlContent => {
+                    const header = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www\.w3\.org/TR/REC-html40'><head><meta charset='utf-8'><style>body{font-family: Arial, sans-serif; line-height:1.2; font-size:10pt;} h1{color:#000; font-size:16pt; margin-bottom:0.2em;} h2{color:#000; font-size:12pt; border-bottom:1px solid #ccc; margin-top:1em; margin-bottom:0.2em; text-transform:uppercase;} h3{color:#000; font-size:10pt; margin-top:0.5em; margin-bottom:0.1em;} p{margin:0 0 0.5em 0;} ul{margin-top:0; margin-bottom:0.5em;}</style></head><body>`;
+                    const footer = `</body></html>`;
+                    const blob = new Blob([header + htmlContent + footer], { type: 'application/msword' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob); a.download = `${title}.doc`; a.click();
+                });
+            } else if (format === 'pdf') {
+                getFullContent('pdf').then(htmlContent => {
+                    const printFrame = document.createElement('iframe');
+                    printFrame.style.display = 'none';
+                    document.body.appendChild(printFrame);
+                    const doc = printFrame.contentWindow.document;
+                    const header = `<html><head><meta charset='utf-8'><style>
+                        body{font-family: Arial, sans-serif; line-height:1.2; font-size:10pt; padding: 2cm; color: #000;} 
+                        h1{font-size:18pt; margin-bottom:0.1em;} 
+                        h2{font-size:13pt; border-bottom:1px solid #777; margin-top:1.5em; margin-bottom:0.5em; text-transform:uppercase; font-weight:bold;} 
+                        h3{font-size:11pt; margin-top:0.8em; margin-bottom:0.2em; border-bottom:1px solid #eee;} 
+                        p{margin:0 0 0.5em 0;} 
+                        ul{margin-top:0.1rem; margin-bottom:0.8rem;}
+                        li{margin-bottom:0.3rem;}
+                        table{width:100%; border-collapse:collapse; margin: 1em 0;}
+                        th, td{border: 1px solid #ddd; padding: 6px; text-align: left; font-size: 9pt;}
+                        th{background: #f9f9f9;}
+                        @page { margin: 1.5cm; }
+                    </style></head><body>`;
+                    doc.open();
+                    doc.write(header + htmlContent + `</body></html>`);
+                    doc.close();
+                    
+                    printFrame.contentWindow.focus();
+                    setTimeout(() => {
+                        printFrame.contentWindow.print();
+                        document.body.removeChild(printFrame);
+                    }, 500);
+                });
+            }
+        }
+
+        function zoomMindmap(factor) {
+            const svg = d3.select('#mindmap-svg');
+            svg.transition().duration(300).call(currentZoom.scaleBy, factor);
+        }
+
+        function resetMindmap() {
+            const svg = d3.select('#mindmap-svg');
+            svg.transition().duration(500).call(currentZoom.transform, d3.zoomIdentity);
+        }
+
+        function toggleFullscreen() {
+            const el = document.getElementById('mindmap');
+            if (!document.fullscreenElement) el.requestFullscreen();
+            else document.exitFullscreen();
+        }
+
         function renderMindmap(data) {
             const container = document.getElementById('mindmap');
-            container.innerHTML = '';
-
-            const BRANCH_COLORS = ['#8b5cf6','#06b6d4','#10b981','#f59e0b','#ef4444','#f97316','#3b82f6','#ec4899'];
-            const BG = '#0f172a';
-            const LEVEL_GAP = 210;  // horizontal px per depth level
-            const WRAP_CHARS = 48;  // chars before wrapping leaf text
-            const LINE_H = 14;      // px per line of wrapped text
-
-            const rootHier = d3.hierarchy(data);
-            const topChildren = rootHier.children || [];
-
-            // Assign color and left/right side — alternate: index 0→right, 1→left, 2→right...
-            topChildren.forEach((child, i) => {
-                const color = BRANCH_COLORS[i % BRANCH_COLORS.length];
-                const isLeft = (i % 2 !== 0);
-                child.descendants().forEach(d => { d._color = color; d._isLeft = isLeft; });
-            });
-            rootHier._color = '#4f46e5';
-            rootHier._isLeft = false;
-
-            // Estimate max wrapped lines in leaf nodes to set vertical spacing
-            let maxLeafLines = 1;
-            rootHier.leaves().forEach(d => {
-                maxLeafLines = Math.max(maxLeafLines, Math.ceil(d.data.label.length / WRAP_CHARS));
-            });
-            const NODE_V_GAP = Math.max(24, maxLeafLines * LINE_H + 10);
-
-            const tree = d3.tree().nodeSize([NODE_V_GAP, LEVEL_GAP]);
-            tree(rootHier);
-
-            // Mirror y-coordinates for left-side branches
-            rootHier.descendants().forEach(d => {
-                if (d._isLeft && d.depth > 0) d.y = -d.y;
-            });
-
-            // Compute bounding box
-            const allNodes = rootHier.descendants();
-            const minX = Math.min(...allNodes.map(d => d.x));
-            const maxX = Math.max(...allNodes.map(d => d.x));
-            const minY = Math.min(...allNodes.map(d => d.y));
-            const maxY = Math.max(...allNodes.map(d => d.y));
-
-            const PAD_V = 30;
-            const PAD_H = 180; // room for leaf text on edges
-            const svgW = (maxY - minY) + PAD_H * 2;
-            const svgH = (maxX - minX) + PAD_V * 2;
-
-            container.style.height = Math.max(600, Math.min(svgH + 40, 900)) + 'px';
+            container.innerHTML = `
+                <div class="mindmap-controls">
+                    <button class="map-btn" onclick="zoomMindmap(1.2)">+</button>
+                    <button class="map-btn" onclick="zoomMindmap(0.8)">−</button>
+                    <button class="map-btn" onclick="resetMindmap()">⊙</button>
+                    <button class="map-btn" onclick="toggleFullscreen()">⛶</button>
+                </div>
+            `;
+            const WIDTH = container.clientWidth;
+            const HEIGHT = container.clientHeight || 500;
 
             const svg = d3.select('#mindmap').append('svg')
                 .attr('id', 'mindmap-svg')
-                .attr('width', svgW)
-                .attr('height', svgH)
-                .attr('viewBox', `${minY - PAD_H} ${minX - PAD_V} ${svgW} ${svgH}`)
-                .style('background', BG);
+                .attr('width', '100%')
+                .attr('height', '100%')
+                .attr('viewBox', `0 0 ${WIDTH} ${HEIGHT}`);
 
-            const zoomGroup = svg.append('g').attr('id', 'mindmap-zoom');
-            svg.call(d3.zoom().scaleExtent([0.15, 4]).on('zoom', e => zoomGroup.attr('transform', e.transform)));
+            const g = svg.append('g').attr('id', 'mindmap-main-group');
+            
+            currentZoom = d3.zoom()
+                .scaleExtent([0.1, 5])
+                .on('zoom', (e) => g.attr('transform', e.transform));
 
-            const g = zoomGroup.append('g');
+            svg.call(currentZoom);
 
-            // Links — horizontal bezier curves
-            g.selectAll('.mm-link')
-                .data(rootHier.links())
+            const root = d3.hierarchy(data);
+            const tree = d3.tree()
+                .size([HEIGHT - 100, WIDTH - 280])
+                .separation((a, b) => (a.parent == b.parent ? 2 : 3));
+            tree(root);
+
+            g.selectAll('.link')
+                .data(root.links())
                 .enter().append('path')
                 .attr('fill', 'none')
-                .attr('stroke', d => d.target._color || '#334155')
-                .attr('stroke-width', d => d.source.depth === 0 ? 2.5 : 1.5)
-                .attr('stroke-opacity', 0.5)
-                .attr('d', d => {
-                    // In d3 tree: .x = vertical pos, .y = horizontal pos
-                    const x0 = d.source.y, y0 = d.source.x;
-                    const x1 = d.target.y, y1 = d.target.x;
-                    const mx = (x0 + x1) / 2;
-                    return `M${x0},${y0} C${mx},${y0} ${mx},${y1} ${x1},${y1}`;
-                });
+                .attr('stroke', 'rgba(168, 85, 247, 0.15)')
+                .attr('stroke-width', 1.2)
+                .attr('d', d3.linkHorizontal().x(d => d.y + 140).y(d => d.x + 50));
 
-            // Nodes
-            g.selectAll('.mm-node')
-                .data(allNodes)
+            const node = g.selectAll('.node')
+                .data(root.descendants())
                 .enter().append('g')
-                .attr('transform', d => `translate(${d.y},${d.x})`)
-                .each(function(d) {
-                    const el = d3.select(this);
-                    const label = d.data.label || '';
-                    const isLeft = d._isLeft;
-                    const dir = isLeft ? -1 : 1;
+                .attr('transform', d => `translate(${d.y + 140},${d.x + 50})`);
 
-                    if (d.depth === 0) {
-                        // Root: indigo circle + label
-                        el.append('circle').attr('r', 8)
-                            .attr('fill', '#4f46e5').attr('stroke', '#818cf8').attr('stroke-width', 2);
-                        el.append('text').attr('x', 14).attr('dy', '0.35em')
-                            .attr('fill', '#f8fafc').style('font-size', '14px').style('font-weight', '700')
-                            .attr('stroke', BG).attr('stroke-width', 3).attr('paint-order', 'stroke')
-                            .text(label);
+            node.append('circle')
+                .attr('r', d => d.depth === 0 ? 6 : 4)
+                .attr('fill', d => d.depth === 0 ? '#a855f7' : '#1e1b4b')
+                .attr('stroke', d => d.depth === 0 ? '#fff' : '#a855f7')
+                .attr('stroke-width', 1.5);
 
-                    } else if (d.depth === 1) {
-                        // Branch: colored dot + bold title
-                        el.append('circle').attr('r', 5)
-                            .attr('fill', d._color).attr('stroke', BG).attr('stroke-width', 2);
-                        el.append('text')
-                            .attr('x', dir * 11).attr('dy', '0.35em')
-                            .attr('text-anchor', isLeft ? 'end' : 'start')
-                            .attr('fill', d._color)
-                            .style('font-size', '12.5px').style('font-weight', '700')
-                            .attr('stroke', BG).attr('stroke-width', 3).attr('paint-order', 'stroke')
-                            .text(label);
-
-                    } else {
-                        // Leaf: small dot + wrapped sentence
-                        el.append('circle').attr('r', 2.5)
-                            .attr('fill', d._color).attr('opacity', 0.75);
-
-                        const lines = wrapLabel(label, WRAP_CHARS);
-                        const txt = el.append('text')
-                            .attr('x', dir * 7)
-                            .attr('text-anchor', isLeft ? 'end' : 'start')
-                            .attr('fill', d.depth === 2 ? '#cbd5e1' : '#94a3b8')
-                            .style('font-size', '11px')
-                            .attr('stroke', BG).attr('stroke-width', 2.5).attr('paint-order', 'stroke');
-
-                        lines.forEach((line, i) => {
-                            txt.append('tspan')
-                                .attr('x', dir * 7)
-                                .attr('dy', i === 0 ? '0.35em' : `${LINE_H}px`)
-                                .text(line);
-                        });
-                    }
+            node.each(function(d) {
+                const el = d3.select(this);
+                const lines = wrapLabel(d.data.label, d.depth < 2 ? 25 : 35);
+                lines.forEach((line, i) => {
+                    el.append('text')
+                        .attr('dy', `${i * 1.1 + 0.31}em`)
+                        .attr('x', d => d.children ? -15 : 15)
+                        .attr('text-anchor', d => d.children ? 'end' : 'start')
+                        .text(line)
+                        .attr('fill', d => d.depth === 0 ? '#fff' : '#94a3b8')
+                        .style('font-size', d => d.depth === 0 ? '12px' : '10px')
+                        .style('font-weight', d => d.depth < 2 ? '700' : '400')
+                        .clone(true).lower()
+                        .attr('stroke', '#05060f')
+                        .attr('stroke-width', 3);
                 });
+            });
         }
 
         function downloadMindmapPng() {
             const svgEl = document.getElementById('mindmap-svg');
-            if (!svgEl) { alert('Generate a summary first.'); return; }
+            const gEl = document.getElementById('mindmap-main-group');
+            if (!svgEl || !gEl) return;
 
-            const vbParts = svgEl.getAttribute('viewBox').split(' ').map(Number);
-            const [, , vw, vh] = vbParts;
-
-            const scale = 2;
-            const canvas = document.createElement('canvas');
-            canvas.width = vw * scale;
-            canvas.height = vh * scale;
-            const ctx = canvas.getContext('2d');
-            ctx.scale(scale, scale);
-            ctx.fillStyle = '#0f172a';
-            ctx.fillRect(0, 0, vw, vh);
-
-            // Clone SVG, reset zoom transform, fix dimensions for full export
-            const clone = svgEl.cloneNode(true);
-            clone.setAttribute('width', vw);
-            clone.setAttribute('height', vh);
-            const zoomG = clone.getElementById('mindmap-zoom');
-            if (zoomG) zoomG.removeAttribute('transform');
-
+            // Get the bounding box of the CONTENT, not the container
+            const bbox = gEl.getBBox();
+            const padding = 40;
+            
             const serializer = new XMLSerializer();
-            let svgStr = serializer.serializeToString(clone);
-            if (!svgStr.includes('xmlns="http://www.w3.org/2000/svg"')) {
-                svgStr = svgStr.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+            // Clone and adjust for capture
+            const clone = svgEl.cloneNode(true);
+            clone.setAttribute('viewBox', `${bbox.x - padding} ${bbox.y - padding} ${bbox.width + padding*2} ${bbox.height + padding*2}`);
+            clone.setAttribute('width', bbox.width + padding*2);
+            clone.setAttribute('height', bbox.height + padding*2);
+            
+            let source = serializer.serializeToString(clone);
+            if(!source.match(/^<svg[^>]+xmlns="http\:\/\/www\.w3\.org\/2000\/svg"/)){
+                source = source.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
             }
 
-            const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
             const img = new Image();
             img.onload = () => {
-                ctx.drawImage(img, 0, 0, vw, vh);
-                URL.revokeObjectURL(url);
+                const canvas = document.createElement('canvas');
+                canvas.width = (bbox.width + padding*2) * 2;
+                canvas.height = (bbox.height + padding*2) * 2;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#05060f';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
                 const a = document.createElement('a');
-                const titleMatch = targetMarkdown.match(/^# (.+)/m);
-                a.download = (titleMatch ? titleMatch[1].replace(/[^a-z0-9 _-]/gi,'').trim().replace(/\s+/g,'_').slice(0,50) : 'mindmap') + '_mindmap.png';
+                a.download = 'youtube_buddy_mindmap.png';
                 a.href = canvas.toDataURL('image/png');
-                document.body.appendChild(a);
                 a.click();
-                document.body.removeChild(a);
             };
-            img.onerror = () => {
-                URL.revokeObjectURL(url);
-                alert('PNG export failed. Try right-clicking the mindmap and saving as image.');
-            };
-            img.src = url;
+            img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(source)));
         }
 
         function copyMarkdown() {
-            navigator.clipboard.writeText(targetMarkdown).then(() => {
-                successCard.classList.remove('hidden');
-                setTimeout(() => successCard.classList.add('hidden'), 3000);
-            });
-        }
-
-        function downloadMarkdown() {
             if (!targetMarkdown) return;
-            const blob = new Blob([targetMarkdown], { type: 'text/markdown;charset=utf-8' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            // Derive filename from the first heading line, sanitized
-            const titleMatch = targetMarkdown.match(/^# (.+)/m);
-            const filename = titleMatch
-                ? titleMatch[1].replace(/[^a-z0-9 _-]/gi, '').trim().replace(/\s+/g, '_').slice(0, 60) + '.md'
-                : 'summary.md';
-            a.href = url;
-            a.download = filename;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
+            navigator.clipboard.writeText(targetMarkdown).then(() => alert("Synthesis copied to clipboard."));
         }
     </script>
 </body>

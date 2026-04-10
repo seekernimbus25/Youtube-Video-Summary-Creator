@@ -151,7 +151,7 @@ SUMMARY RULES:
 6. conclusion: Must reflect the presenter's actual closing argument, not just a restatement of the title.
 7. keywords: 8-15 specific technical terms or named entities from the video.
 8. action_items: If none exist, return [].
-9. screenshot_timestamps: Exactly 4-6 visually significant moments.
+9. screenshot_timestamps: Return 6-10 moments, aiming for roughly one per major section. section_title must exactly match one of key_sections.title values. Keep each timestamp inside that section's time window, usually 2-10 seconds after the section begins unless the transcript strongly indicates a later visual moment.
 
 MINDMAP RULES:
 10. Structure: root → 4-7 major branch nodes → 3-6 leaf nodes per branch.
