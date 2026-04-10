@@ -888,6 +888,57 @@
             progressPercent.innerText = "0%";
             progressMessage.innerText = "Connecting to Knowledge Engine...";
 
+            // LOCAL DEMO INTERCEPTION
+            if (url.toLowerCase().includes("demo")) {
+                const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+                progressMessage.innerText = "Loading locally cached intelligence...";
+                await sleep(500);
+                progressBar.style.width = "50%"; progressPercent.innerText = "50%";
+                progressMessage.innerText = "Synthesizing demo results...";
+                await sleep(500);
+                
+                const demoData = {
+                    metadata: {
+                        video_id: "demo",
+                        title: "Introduction to AI Synthesis (Demo)",
+                        channel: "Youtube Buddy Lab",
+                        duration_formatted: "12:45",
+                        thumbnail_url: "https://images.unsplash.com/photo-1677442136019-21780ecad995?auto=format&fit=crop&q=80&w=800"
+                    },
+                    summary: {
+                        video_overview: { title: "The Future of AI Synthesis", elevator_pitch: "Explore how automated intelligence distillation transforms the way we consume video content." },
+                        key_insights: [
+                            "AI can compress 1 hour of video into 5 minutes of strategic summary.",
+                            "Structural mindmaps provide a multi-dimensional mental model of topics.",
+                            "Visual context (Shots) anchor abstract concepts to real video moments."
+                        ],
+                        key_sections: [
+                            { title: "The Problem of Information Overload", timestamp: "0:00", timestamp_seconds: 0, description: "Why we struggle to keep up with the volume of educational video content.", steps: ["Identify cognitive limits", "Measure watch-time vs retention"], trade_offs: ["Time spent vs value extracted"], notable_detail: "The average professional watches 4 hours of video weekly but retains only 15%." },
+                            { title: "The Synthesis Engine", timestamp: "4:30", timestamp_seconds: 270, description: "How LLMs extract structural meaning from raw transcripts.", steps: ["Semantic chunking", "Relational mapping"], trade_offs: ["Depth vs Granularity"], notable_detail: "Context-aware extraction is 4x more accurate than keyword-based methods." }
+                        ],
+                        important_concepts: [
+                            { concept: "Semantic Distillation", explanation: "The process of extracting core intent while discarding redundancy.", why_it_matters: "Increases learning speed by up to 300%.", example_from_video: "Reducing the transcript to its core logical skeleton." },
+                            { concept: "Visual Anchoring", explanation: "Using screenshots to provide cognitive context to written text.", why_it_matters: "Enhances long-term memory visual encoding." }
+                        ],
+                        comparison_table: {
+                            applicable: true,
+                            headers: ["Feature", "Traditional Watching", "Youtube Buddy"],
+                            rows: [["Speed", "1x (Real-time)", "10x (Summary)"], ["Structure", "Linear", "Multidimensional"], ["Searchability", "Low", "Instant"]]
+                        },
+                        practical_recommendations: [
+                            "Distill complex technical roadmaps before deep-diving.",
+                            "Use the Mindmap to build a mental directory before watching."
+                        ],
+                        conclusion: "AI synthesis is not about replacing watching, but about optimizing knowledge retention for the modern information age."
+                    }
+                };
+                
+                renderResults(demoData);
+                summarizeBtn.disabled = false;
+                setTimeout(() => progressCard.classList.add('hidden'), 500);
+                return;
+            }
+
             try {
                 const response = await fetch('/api/summarize', {
                     method: 'POST',
