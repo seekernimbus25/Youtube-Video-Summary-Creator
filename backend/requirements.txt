@@ -14,3 +14,4 @@ scenedetect==0.6.7.1
 transformers==4.51.3
 torch
 pillow==11.2.1
+playwright==1.51.0
