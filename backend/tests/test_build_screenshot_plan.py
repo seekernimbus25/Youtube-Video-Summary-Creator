@@ -76,3 +76,41 @@ def test_metadata_has_empty_chapters_when_none():
         result = _fetch_video_metadata_sync("https://youtube.com/watch?v=test")
 
     assert result.chapters == []
+
+
+def test_parse_json3_returns_segments_with_timestamps():
+    import json
+    from services.transcript_service import _parse_json3_with_segments
+
+    raw = json.dumps(
+        {
+            "events": [
+                {"tStartMs": 0, "dDurationMs": 3000, "segs": [{"utf8": "Hello world"}]},
+                {"tStartMs": 5000, "dDurationMs": 2000, "segs": [{"utf8": "Next sentence"}]},
+                {"tStartMs": 8000, "dDurationMs": 1500, "segs": [{"utf8": "\n"}]},
+            ]
+        }
+    )
+
+    result = _parse_json3_with_segments(raw)
+    assert result.text == "Hello world Next sentence"
+    assert len(result.segments) == 2
+    assert result.segments[0].start == 0.0
+    assert result.segments[0].duration == 3.0
+    assert result.segments[0].text == "Hello world"
+    assert result.segments[1].start == 5.0
+
+
+def test_transcript_api_segments_preserved():
+    from services.transcript_service import _segments_from_transcript_api_data
+
+    raw_data = [
+        {"text": "First sentence.", "start": 1.5, "duration": 2.0},
+        {"text": "Second sentence.", "start": 3.5, "duration": 1.8},
+    ]
+
+    result = _segments_from_transcript_api_data(raw_data)
+    assert result.text == "First sentence. Second sentence."
+    assert len(result.segments) == 2
+    assert result.segments[0].start == 1.5
+    assert result.segments[1].start == 3.5

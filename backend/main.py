@@ -3,6 +3,7 @@ import json
 import logging
 import asyncio
 import time
+import re
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request
 from utils.network import disable_system_proxies_if_configured
@@ -43,24 +44,97 @@ def _normalize_title(value: str) -> str:
     return (value or "").strip().lower()
 
 
-def _build_screenshot_plan(summary: dict, duration_seconds: int) -> list[dict]:
+def _find_chapter_for_section(section_title: str, section_start_sec: int, chapters: list) -> dict | None:
+    """Match a summary section to a YouTube chapter by time first, then title."""
+    if not chapters:
+        return None
+    normalized_title = _normalize_title(section_title)
+    for chapter in chapters:
+        if chapter.start_time <= section_start_sec <= chapter.end_time:
+            return chapter
+    for chapter in chapters:
+        chapter_title = _normalize_title(chapter.title)
+        if normalized_title and (
+            normalized_title in chapter_title or chapter_title in normalized_title
+        ):
+            return chapter
+    return None
+
+
+def _find_segment_anchor(section_title: str, section_desc: str, segments: list) -> float | None:
+    """Use transcript word overlap to anchor a section to a nearby transcript segment."""
+    if not segments:
+        return None
+
+    section_words = {
+        word.lower()
+        for word in re.split(r"\W+", f"{section_title} {section_desc}")
+        if len(word) > 3
+    }
+    if not section_words:
+        return None
+
+    best_score = 0
+    best_start = None
+    for segment in segments:
+        segment_words = {
+            word.lower()
+            for word in re.split(r"\W+", segment.text)
+            if len(word) > 3
+        }
+        overlap = len(section_words & segment_words)
+        if overlap > best_score:
+            best_score = overlap
+            best_start = segment.start
+
+    return best_start if best_score >= 2 else None
+
+
+def _build_screenshot_plan(
+    summary: dict,
+    duration_seconds: int,
+    chapters: list = None,
+    transcript_segments: list = None,
+) -> list[dict]:
     sections = summary.get("key_sections", []) or []
     requested = summary.get("screenshot_timestamps", []) or []
     max_second = max(0, duration_seconds - 2)
     keywords = summary.get("keywords", []) or []
+    chapters = chapters or []
+    transcript_segments = transcript_segments or []
 
     section_windows = []
     for idx, section in enumerate(sections):
-        start = max(0, min(int(section.get("timestamp_seconds", 0) or 0), max_second))
-        if idx + 1 < len(sections):
-            next_start = int(sections[idx + 1].get("timestamp_seconds", start + 1) or (start + 1))
-            end = max(start, min(next_start - 1, max_second))
+        claude_start = max(0, min(int(section.get("timestamp_seconds", 0) or 0), max_second))
+        section_title = section.get("title", "")
+        section_desc = section.get("description", "")
+
+        chapter = _find_chapter_for_section(section_title, claude_start, chapters)
+        if chapter:
+            start = max(0, min(int(chapter.start_time), max_second))
+            end = max(start, min(int(chapter.end_time), max_second))
         else:
-            end = max_second
+            segment_anchor = _find_segment_anchor(section_title, section_desc, transcript_segments)
+            if segment_anchor is not None:
+                start = max(0, min(int(segment_anchor), max_second))
+                if idx + 1 < len(sections):
+                    next_start = int(
+                        sections[idx + 1].get("timestamp_seconds", start + 60) or (start + 60)
+                    )
+                    end = max(start, min(next_start - 1, max_second))
+                else:
+                    end = max_second
+            else:
+                start = claude_start
+                if idx + 1 < len(sections):
+                    next_start = int(sections[idx + 1].get("timestamp_seconds", start + 1) or (start + 1))
+                    end = max(start, min(next_start - 1, max_second))
+                else:
+                    end = max_second
 
         section_context_parts = [
-            section.get("title", ""),
-            section.get("description", ""),
+            section_title,
+            section_desc,
             section.get("notable_detail", ""),
             " ".join(section.get("sub_points", []) or []),
             " ".join(section.get("steps", []) or []),
@@ -68,8 +142,8 @@ def _build_screenshot_plan(summary: dict, duration_seconds: int) -> list[dict]:
             " ".join(keywords[:10]),
         ]
         section_windows.append({
-            "title": section.get("title", ""),
-            "title_norm": _normalize_title(section.get("title", "")),
+            "title": section_title,
+            "title_norm": _normalize_title(section_title),
             "start": start,
             "end": end,
             "context": " ".join(part for part in section_context_parts if part).strip(),
@@ -90,8 +164,8 @@ def _build_screenshot_plan(summary: dict, duration_seconds: int) -> list[dict]:
 
         if window:
             candidates.extend([
-                min(start + 2, end),
-                min(start + 5, end),
+                min(start + 3, end),
+                min(start + 6, end),
                 start,
             ])
 
@@ -112,7 +186,7 @@ def _build_screenshot_plan(summary: dict, duration_seconds: int) -> list[dict]:
 
         if section:
             if preferred < section["start"] or preferred > section["end"]:
-                preferred = min(section["start"] + 2, section["end"])
+                preferred = min(section["start"] + 3, section["end"])
             covered_sections.add(section["title_norm"])
 
         second = allocate_second(preferred, section)
@@ -134,7 +208,7 @@ def _build_screenshot_plan(summary: dict, duration_seconds: int) -> list[dict]:
         if section["title_norm"] in covered_sections:
             continue
 
-        second = allocate_second(min(section["start"] + 2, section["end"]), section)
+        second = allocate_second(min(section["start"] + 3, section["end"]), section)
         used_seconds.add(second)
         planned.append({
             "seconds": second,
@@ -290,7 +364,7 @@ async def summarize(request: Request, body: SummarizeRequest):
             
             # Step 2
             yield yield_progress(2, "Fetching transcript...")
-            transcript_text = await fetch_transcript(video_id)
+            transcript_result = await fetch_transcript(video_id)
             
             # Step 3
             yield yield_progress(3, "Generating AI summary...")
@@ -298,7 +372,7 @@ async def summarize(request: Request, body: SummarizeRequest):
                 title=metadata.title,
                 channel=metadata.channel,
                 duration=metadata.duration_formatted,
-                transcript=transcript_text
+                transcript=transcript_result.text
             )
             
             # Step 4
@@ -307,7 +381,9 @@ async def summarize(request: Request, body: SummarizeRequest):
             if include_screenshots and FFMPEG_AVAILABLE:
                 screenshot_plan = _build_screenshot_plan(
                     claude_val.get('summary', {}),
-                    metadata.duration_seconds
+                    metadata.duration_seconds,
+                    metadata.chapters,
+                    transcript_result.segments,
                 )
                 extracted_files = await extract_screenshots_for_video(
                     video_url=url,

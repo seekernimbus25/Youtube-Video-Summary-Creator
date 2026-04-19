@@ -5,13 +5,14 @@ import tempfile
 import asyncio
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from models import TranscriptSegment, TranscriptResult
 from utils.network import without_proxy_env
 
 logger = logging.getLogger(__name__)
 executor = ThreadPoolExecutor(max_workers=2)
 
 
-def _fetch_with_ytdlp(video_url: str, video_id: str) -> str:
+def _fetch_with_ytdlp(video_url: str, video_id: str) -> TranscriptResult:
     """
     Use yt-dlp to download auto-generated or manual subtitles.
     This is the most reliable method as yt-dlp handles all edge cases.
@@ -56,13 +57,12 @@ def _fetch_with_ytdlp(video_url: str, video_id: str) -> str:
             content = f.read()
 
         if sub_file.endswith('.json3'):
-            return _parse_json3(content)
-        elif sub_file.endswith('.vtt'):
-            return _parse_vtt(content)
-        elif sub_file.endswith('.srt'):
-            return _parse_srt(content)
-        else:
-            return content
+            return _parse_json3_with_segments(content)
+        if sub_file.endswith('.vtt'):
+            return TranscriptResult(text=_parse_vtt(content), segments=[])
+        if sub_file.endswith('.srt'):
+            return TranscriptResult(text=_parse_srt(content), segments=[])
+        return TranscriptResult(text=content, segments=[])
 
     finally:
         # Cleanup temp files
@@ -127,7 +127,51 @@ def _parse_srt(content: str) -> str:
     return ' '.join(text_lines)
 
 
-def _fetch_with_transcript_api(video_id: str) -> str:
+def _segments_from_transcript_api_data(data: list) -> TranscriptResult:
+    """Convert youtube-transcript-api data into a text + segment result."""
+    segments = [
+        TranscriptSegment(
+            text=item['text'].replace('\n', ' ').strip(),
+            start=float(item['start']),
+            duration=float(item.get('duration', 0)),
+        )
+        for item in data
+        if item.get('text', '').replace('\n', '').strip()
+    ]
+    return TranscriptResult(
+        text=' '.join(segment.text for segment in segments),
+        segments=segments,
+    )
+
+
+def _parse_json3_with_segments(content: str) -> TranscriptResult:
+    """Parse YouTube json3 subtitles while keeping segment timing."""
+    try:
+        data = json.loads(content)
+        segments = []
+        for event in data.get('events', []):
+            segs = event.get('segs', [])
+            text_parts = [seg.get('utf8', '').strip() for seg in segs]
+            combined = ' '.join(part for part in text_parts if part and part != '\n').strip()
+            if not combined:
+                continue
+            segments.append(
+                TranscriptSegment(
+                    text=combined,
+                    start=float(event.get('tStartMs', 0)) / 1000.0,
+                    duration=float(event.get('dDurationMs', 0)) / 1000.0,
+                )
+            )
+        return TranscriptResult(
+            text=' '.join(segment.text for segment in segments),
+            segments=segments,
+        )
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse json3 with segments, returning raw content.")
+        return TranscriptResult(text=content, segments=[])
+
+
+def _fetch_with_transcript_api(video_id: str) -> TranscriptResult:
     """
     Fallback: Use youtube-transcript-api library.
     Verified to use .fetch() and .list() instance methods in local environment.
@@ -141,7 +185,7 @@ def _fetch_with_transcript_api(video_id: str) -> str:
             try:
                 data = api.fetch(video_id)
                 if data:
-                    return ' '.join([item['text'] for item in data]).replace('\n', ' ')
+                    return _segments_from_transcript_api_data(list(data))
             except Exception as e:
                 logger.info(f"Direct fetch failed, trying list fallback: {e}")
 
@@ -157,7 +201,8 @@ def _fetch_with_transcript_api(video_id: str) -> str:
                 
                 if transcript:
                     data = transcript.fetch()
-                    return ' '.join([item['text'] for item in data]).replace('\n', ' ')
+                    if data:
+                        return _segments_from_transcript_api_data(list(data))
             except Exception as e:
                 logger.warning(f"Transcript list lookup failed for {video_id}: {e}")
 
@@ -168,7 +213,7 @@ def _fetch_with_transcript_api(video_id: str) -> str:
     raise ValueError("youtube-transcript-api could not find any compatible transcript.")
 
 
-async def fetch_transcript(video_id: str) -> str:
+async def fetch_transcript(video_id: str) -> TranscriptResult:
     """
     Primary: yt-dlp (handles auto-generated captions reliably)
     Fallback: youtube-transcript-api
@@ -179,10 +224,12 @@ async def fetch_transcript(video_id: str) -> str:
     # Method 1: yt-dlp (most reliable for auto-generated subs)
     try:
         logger.info(f"Fetching transcript via yt-dlp for {video_id}")
-        text = await loop.run_in_executor(executor, _fetch_with_ytdlp, video_url, video_id)
-        if text and len(text.strip()) > 50:
-            logger.info(f"Successfully fetched transcript via yt-dlp ({len(text)} chars)")
-            return text
+        result = await loop.run_in_executor(executor, _fetch_with_ytdlp, video_url, video_id)
+        if result and len(result.text.strip()) > 50:
+            logger.info(
+                f"Successfully fetched transcript via yt-dlp ({len(result.text)} chars, {len(result.segments)} segments)"
+            )
+            return result
         else:
             logger.warning("yt-dlp returned very short or empty transcript, trying fallback.")
     except Exception as e:
@@ -191,10 +238,12 @@ async def fetch_transcript(video_id: str) -> str:
     # Method 2: youtube-transcript-api fallback
     try:
         logger.info(f"Falling back to youtube-transcript-api for {video_id}")
-        text = await loop.run_in_executor(executor, _fetch_with_transcript_api, video_id)
-        if text and len(text.strip()) > 50:
-            logger.info(f"Successfully fetched transcript via youtube-transcript-api ({len(text)} chars)")
-            return text
+        result = await loop.run_in_executor(executor, _fetch_with_transcript_api, video_id)
+        if result and len(result.text.strip()) > 50:
+            logger.info(
+                f"Successfully fetched transcript via youtube-transcript-api ({len(result.text)} chars, {len(result.segments)} segments)"
+            )
+            return result
     except Exception as e:
         logger.warning(f"youtube-transcript-api also failed: {e}")
 
