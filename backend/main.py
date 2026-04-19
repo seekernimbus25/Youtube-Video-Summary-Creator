@@ -22,7 +22,7 @@ from models import SummarizeRequest, SSEEventResult, SSEEventError, ResultData
 from services.transcript_service import fetch_transcript
 from services.video_service import fetch_video_metadata
 from services.claude_service import generate_summary_and_mindmap
-from services.screenshot_service import extract_screenshots_for_video, FFMPEG_AVAILABLE
+from services.playwright_service import extract_screenshots_playwright, PLAYWRIGHT_AVAILABLE
 
 logger = get_logger("main")
 
@@ -266,8 +266,8 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 def health_check():
     return {
         "status": "ok",
-        "ffmpeg_available": FFMPEG_AVAILABLE,
-        "version": "1.0.0"
+        "playwright_available": PLAYWRIGHT_AVAILABLE,
+        "version": "2.0.0"
     }
 
 @app.post("/api/summarize")
@@ -378,17 +378,15 @@ async def summarize(request: Request, body: SummarizeRequest):
             # Step 4
             yield yield_progress(4, "Extracting screenshots...")
             screenshot_data = []
-            if include_screenshots and FFMPEG_AVAILABLE:
+            if include_screenshots and PLAYWRIGHT_AVAILABLE:
                 screenshot_plan = _build_screenshot_plan(
                     claude_val.get('summary', {}),
                     metadata.duration_seconds,
                     metadata.chapters,
                     transcript_result.segments,
                 )
-                extracted_files = await extract_screenshots_for_video(
-                    video_url=url,
+                extracted_files = await extract_screenshots_playwright(
                     video_id=video_id,
-                    duration_seconds=metadata.duration_seconds,
                     screenshot_requests=screenshot_plan,
                     static_dir=os.path.join(STATIC_DIR, "screenshots")
                 )
@@ -408,8 +406,8 @@ async def summarize(request: Request, body: SummarizeRequest):
                             "url": f"/static/screenshots/{filename}",
                             "section_title": shot.get('section_title', '')
                         })
-            elif include_screenshots and not FFMPEG_AVAILABLE:
-                logger.warning("Screenshots requested but ffmpeg is missing.")
+            elif include_screenshots and not PLAYWRIGHT_AVAILABLE:
+                logger.warning("Screenshots requested but Playwright is not installed.")
             
             # Step 5
             yield yield_progress(5, "Done!")
