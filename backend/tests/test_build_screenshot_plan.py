@@ -114,3 +114,81 @@ def test_transcript_api_segments_preserved():
     assert len(result.segments) == 2
     assert result.segments[0].start == 1.5
     assert result.segments[1].start == 3.5
+
+
+def _make_summary_with_sections():
+    return {
+        "key_sections": [
+            {
+                "title": "Introduction",
+                "timestamp": "0:00",
+                "timestamp_seconds": 0,
+                "description": "Overview of the topic",
+            },
+            {
+                "title": "Deep Dive",
+                "timestamp": "1:00",
+                "timestamp_seconds": 60,
+                "description": "Technical details explained",
+            },
+            {
+                "title": "Conclusion",
+                "timestamp": "4:00",
+                "timestamp_seconds": 240,
+                "description": "Summary and takeaways",
+            },
+        ],
+        "screenshot_timestamps": [
+            {"seconds": 5, "caption": "Intro frame", "section_title": "Introduction"},
+            {"seconds": 65, "caption": "Deep dive frame", "section_title": "Deep Dive"},
+        ],
+        "keywords": ["AI", "technology"],
+    }
+
+
+def test_chapters_anchor_screenshot_timestamps():
+    from main import _build_screenshot_plan
+
+    chapters = [
+        Chapter(title="Introduction", start_time=0.0, end_time=58.0),
+        Chapter(title="Deep Dive", start_time=58.0, end_time=238.0),
+        Chapter(title="Conclusion", start_time=238.0, end_time=300.0),
+    ]
+
+    plan = _build_screenshot_plan(
+        _make_summary_with_sections(),
+        duration_seconds=300,
+        chapters=chapters,
+        transcript_segments=[],
+    )
+
+    intro_shot = next((shot for shot in plan if shot["section_title"] == "Introduction"), None)
+    assert intro_shot is not None
+    assert intro_shot["window_start"] == 0
+    assert intro_shot["window_end"] == 58
+
+    deep_shot = next((shot for shot in plan if shot["section_title"] == "Deep Dive"), None)
+    assert deep_shot is not None
+    assert deep_shot["window_start"] == 58
+    assert deep_shot["window_end"] == 238
+
+
+def test_transcript_segments_anchor_when_no_chapters():
+    from main import _build_screenshot_plan
+
+    segments = [
+        TranscriptSegment(text="Welcome to the introduction of our topic", start=2.0, duration=3.0),
+        TranscriptSegment(text="Now let us deep dive into the technical details", start=55.0, duration=4.0),
+        TranscriptSegment(text="To conclude today's session", start=235.0, duration=3.0),
+    ]
+
+    plan = _build_screenshot_plan(
+        _make_summary_with_sections(),
+        duration_seconds=300,
+        chapters=[],
+        transcript_segments=segments,
+    )
+
+    deep_shot = next((shot for shot in plan if shot["section_title"] == "Deep Dive"), None)
+    assert deep_shot is not None
+    assert 50 <= deep_shot["window_start"] <= 60
