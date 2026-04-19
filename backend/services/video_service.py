@@ -2,7 +2,7 @@ import yt_dlp
 import logging
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from models import Metadata
+from models import Metadata, Chapter
 from utils.network import without_proxy_env
 
 logger = logging.getLogger(__name__)
@@ -26,13 +26,23 @@ def _fetch_video_metadata_sync(video_url: str) -> Metadata:
             mins = duration_s // 60
             secs = duration_s % 60
             duration_formatted = f"{mins}:{secs:02d}"
+            chapters_raw = info.get('chapters') or []
+            chapters = [
+                Chapter(
+                    title=chapter.get('title', f'Chapter {index + 1}'),
+                    start_time=float(chapter.get('start_time', 0)),
+                    end_time=float(chapter.get('end_time', duration_s)),
+                )
+                for index, chapter in enumerate(chapters_raw)
+            ]
 
             return Metadata(
                 title=info.get('title', 'Unknown Title'),
                 channel=info.get('uploader', 'Unknown Channel'),
                 duration_seconds=duration_s,
                 duration_formatted=duration_formatted,
-                thumbnail_url=info.get('thumbnail', '')
+                thumbnail_url=info.get('thumbnail', ''),
+                chapters=chapters,
             )
 
 async def fetch_video_metadata(video_url: str) -> Metadata:
