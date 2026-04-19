@@ -11,3 +11,6 @@ opencv-python-headless==4.12.0.88
 paddleocr==3.2.0
 rapidfuzz==3.14.1
 scenedetect==0.6.7.1
+transformers==4.51.3
+torch
+pillow==11.2.1
