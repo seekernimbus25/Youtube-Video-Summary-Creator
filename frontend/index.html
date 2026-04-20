@@ -1182,6 +1182,7 @@
         }
 
         let currentZoom = null;
+        let currentMindmapHomeTransform = d3.zoomIdentity;
 
         // Export Dropdown Toggle
         function toggleExport(id, event) {
@@ -1365,7 +1366,7 @@
 
         function resetMindmap() {
             const svg = d3.select('#mindmap-svg');
-            svg.transition().duration(500).call(currentZoom.transform, d3.zoomIdentity);
+            svg.transition().duration(500).call(currentZoom.transform, currentMindmapHomeTransform);
         }
 
         function toggleFullscreen() {
@@ -1386,6 +1387,9 @@
             `;
             const WIDTH = container.clientWidth;
             const HEIGHT = container.clientHeight || 500;
+            const CENTER_X = WIDTH / 2;
+            const CENTER_Y = HEIGHT / 2;
+            const branchPalette = ['#4fd1c5', '#60a5fa', '#818cf8', '#a78bfa', '#f472b6', '#f59e0b', '#34d399'];
 
             const svg = d3.select('#mindmap').append('svg')
                 .attr('id', 'mindmap-svg')
@@ -1402,47 +1406,128 @@
             svg.call(currentZoom);
 
             const root = d3.hierarchy(data);
+            const radius = Math.max(Math.min(WIDTH, HEIGHT) / 2 - 90, 140);
             const tree = d3.tree()
-                .size([HEIGHT - 100, WIDTH - 280])
-                .separation((a, b) => (a.parent == b.parent ? 2 : 3));
+                .size([Math.PI * 2, radius])
+                .separation((a, b) => {
+                    if (a.depth === 1 || b.depth === 1) return a.parent === b.parent ? 1.8 : 2.6;
+                    return a.parent === b.parent ? 1.2 : 1.8;
+                });
             tree(root);
+
+            root.descendants().forEach((node) => {
+                const angle = node.x - Math.PI / 2;
+                node.projectedX = Math.cos(angle) * node.y;
+                node.projectedY = Math.sin(angle) * node.y;
+                const topLevelAncestor = node.ancestors().reverse()[1];
+                node.branchColor = topLevelAncestor
+                    ? branchPalette[topLevelAncestor.parent.children.indexOf(topLevelAncestor) % branchPalette.length]
+                    : '#ffffff';
+            });
+
+            const radialLink = d3.linkRadial()
+                .angle(d => d.x)
+                .radius(d => d.y);
 
             g.selectAll('.link')
                 .data(root.links())
                 .enter().append('path')
                 .attr('fill', 'none')
-                .attr('stroke', 'rgba(168, 85, 247, 0.15)')
-                .attr('stroke-width', 1.2)
-                .attr('d', d3.linkHorizontal().x(d => d.y + 140).y(d => d.x + 50));
+                .attr('stroke', d => {
+                    const color = d.target.branchColor || '#a78bfa';
+                    return d.target.depth === 1 ? color : d3.color(color).copy({ opacity: 0.55 });
+                })
+                .attr('stroke-width', d => d.target.depth === 1 ? 4 : 2.2)
+                .attr('stroke-linecap', 'round')
+                .attr('opacity', d => d.target.depth === 1 ? 0.9 : 0.8)
+                .attr('d', radialLink);
 
             const node = g.selectAll('.node')
                 .data(root.descendants())
                 .enter().append('g')
-                .attr('transform', d => `translate(${d.y + 140},${d.x + 50})`);
+                .attr('class', d => `node depth-${d.depth}`)
+                .attr('transform', d => `translate(${d.projectedX},${d.projectedY})`);
 
             node.append('circle')
-                .attr('r', d => d.depth === 0 ? 6 : 4)
-                .attr('fill', d => d.depth === 0 ? '#a855f7' : '#1e1b4b')
-                .attr('stroke', d => d.depth === 0 ? '#fff' : '#a855f7')
-                .attr('stroke-width', 1.5);
+                .filter(d => d.depth !== 0)
+                .attr('r', d => d.depth === 1 ? 4.5 : 2.8)
+                .attr('fill', d => d.depth === 1 ? d.branchColor : '#cbd5e1')
+                .attr('stroke', d => d.depth === 1 ? '#ffffff' : 'rgba(15, 23, 42, 0.85)')
+                .attr('stroke-width', d => d.depth === 1 ? 1.6 : 1.2);
 
-            node.each(function(d) {
+            const rootGroup = node.filter(d => d.depth === 0);
+            rootGroup.each(function(d) {
                 const el = d3.select(this);
-                const lines = wrapLabel(d.data.label, d.depth < 2 ? 25 : 35);
+                const lines = wrapLabel(d.data.label, 16).slice(0, 3);
+                const lineHeight = 18;
+                const textWidth = Math.max(...lines.map(line => line.length), 8) * 8.6;
+                const pillWidth = Math.max(textWidth + 34, 150);
+                const pillHeight = lines.length * lineHeight + 26;
+                const offsetY = -pillHeight / 2;
+
+                el.append('rect')
+                    .attr('x', -pillWidth / 2)
+                    .attr('y', offsetY)
+                    .attr('rx', 18)
+                    .attr('ry', 18)
+                    .attr('width', pillWidth)
+                    .attr('height', pillHeight)
+                    .attr('fill', 'rgba(255,255,255,0.96)')
+                    .attr('stroke', 'rgba(148, 163, 184, 0.35)')
+                    .attr('stroke-width', 1.2);
+
                 lines.forEach((line, i) => {
                     el.append('text')
-                        .attr('dy', `${i * 1.1 + 0.31}em`)
-                        .attr('x', d => d.children ? -15 : 15)
-                        .attr('text-anchor', d => d.children ? 'end' : 'start')
+                        .attr('x', 0)
+                        .attr('y', offsetY + 24 + i * lineHeight)
+                        .attr('text-anchor', 'middle')
                         .text(line)
-                        .attr('fill', d => d.depth === 0 ? '#fff' : '#94a3b8')
-                        .style('font-size', d => d.depth === 0 ? '12px' : '10px')
-                        .style('font-weight', d => d.depth < 2 ? '700' : '400')
-                        .clone(true).lower()
-                        .attr('stroke', '#05060f')
-                        .attr('stroke-width', 3);
+                        .attr('fill', '#334155')
+                        .style('font-size', '14px')
+                        .style('font-weight', '700');
                 });
             });
+
+            node.each(function(d) {
+                if (d.depth === 0) return;
+                const el = d3.select(this);
+                const isRightSide = d.projectedX >= 0;
+                const rotation = (d.x * 180 / Math.PI) - 90;
+                const readableRotation = (d.x >= Math.PI && d.x < Math.PI * 2) ? rotation + 180 : rotation;
+                const anchor = isRightSide ? 'start' : 'end';
+                const labelOffset = d.depth === 1 ? 16 : 12;
+                const lineLimit = d.depth === 1 ? 18 : 24;
+                const lines = wrapLabel(d.data.label, lineLimit).slice(0, d.depth === 1 ? 3 : 4);
+                const textColor = d.depth === 1 ? d.branchColor : '#dbe7f5';
+                const fontSize = d.depth === 1 ? '13px' : '11px';
+                const fontWeight = d.depth === 1 ? '700' : '500';
+
+                lines.forEach((line, i) => {
+                    el.append('text')
+                        .attr('transform', `rotate(${readableRotation})`)
+                        .attr('x', isRightSide ? labelOffset : -labelOffset)
+                        .attr('y', i * 13 - ((lines.length - 1) * 6.5))
+                        .attr('text-anchor', anchor)
+                        .text(line)
+                        .attr('fill', textColor)
+                        .style('font-size', fontSize)
+                        .style('font-weight', fontWeight)
+                        .clone(true).lower()
+                        .attr('stroke', 'rgba(5, 6, 15, 0.92)')
+                        .attr('stroke-width', d.depth === 1 ? 5 : 4)
+                        .attr('paint-order', 'stroke');
+                });
+            });
+
+            const rootBounds = rootGroup.node()?.getBBox();
+            const fitScale = Math.min(1, Math.min(
+                (WIDTH - 40) / ((radius * 2) + (rootBounds?.width || 0) + 80),
+                (HEIGHT - 40) / ((radius * 2) + (rootBounds?.height || 0) + 80)
+            ));
+            currentMindmapHomeTransform = d3.zoomIdentity
+                .translate(CENTER_X, CENTER_Y)
+                .scale(fitScale);
+            svg.call(currentZoom.transform, currentMindmapHomeTransform);
         }
 
         function downloadMindmapPng() {
