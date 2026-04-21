@@ -3,13 +3,13 @@ import logging
 import os
 import shutil
 import tempfile
+import uuid
 from typing import List
 
 logger = logging.getLogger(__name__)
 
 try:
     from playwright.async_api import async_playwright
-
     PLAYWRIGHT_AVAILABLE = True
 except ImportError:
     PLAYWRIGHT_AVAILABLE = False
@@ -57,15 +57,110 @@ async def _capture_frame(page, seek_time: float, output_path: str) -> bool:
     """Seek the embedded player and capture the current video frame."""
     try:
         await page.evaluate(
-            "(seekTime) => { const video = document.querySelector('video'); if (video) video.currentTime = seekTime; }",
+            """(seekTime) => {
+                const video = document.querySelector('video');
+                if (video) {
+                    video.pause();
+                    video.currentTime = seekTime;
+                }
+            }""",
             seek_time,
         )
-        await asyncio.sleep(0.6)
+        await page.wait_for_function(
+            """() => {
+                const video = document.querySelector('video');
+                return !!video && video.readyState >= 2 && !video.seeking;
+            }""",
+            timeout=3000,
+        )
+        await asyncio.sleep(0.18)
         video = page.locator("video")
         await video.screenshot(path=output_path, type="jpeg")
         return os.path.exists(output_path) and os.path.getsize(output_path) > 1000
     except Exception as exc:
         logger.warning(f"Frame capture failed at {seek_time:.1f}s: {exc}")
+        return False
+
+
+async def _log_page_diagnostics(page, prefix: str) -> None:
+    """Log a compact snapshot of the current page state for debugging."""
+    try:
+        title = await page.title()
+    except Exception:
+        title = "<unavailable>"
+
+    try:
+        url = page.url
+    except Exception:
+        url = "<unavailable>"
+
+    try:
+        text_sample = await page.evaluate(
+            """() => (document.body?.innerText || '')
+                .replace(/\\s+/g, ' ')
+                .trim()
+                .slice(0, 400)"""
+        )
+    except Exception:
+        text_sample = "<unavailable>"
+
+    logger.error(
+        "%s | url=%s | title=%s | body_sample=%s",
+        prefix,
+        url,
+        title,
+        text_sample,
+    )
+
+
+async def _accept_youtube_consent(page) -> None:
+    """Best-effort click through consent prompts that block the video element."""
+    selectors = [
+        "button:has-text('I agree')",
+        "button:has-text('Accept all')",
+        "button:has-text('Accept the use of cookies and other data for the purposes described')",
+        "button[aria-label*='Accept']",
+        "form button + button",
+    ]
+
+    for selector in selectors:
+        try:
+            button = page.locator(selector).first
+            if await button.count():
+                await button.click(timeout=2000)
+                await asyncio.sleep(1.0)
+                logger.info(f"Playwright: clicked consent selector {selector}")
+                return
+        except Exception:
+            continue
+
+
+async def _wait_for_video_player(page, source_url: str) -> bool:
+    """Load the player page and wait until a usable video element is present."""
+    try:
+        await page.goto(source_url, wait_until="domcontentloaded", timeout=30000)
+        try:
+            await page.wait_for_load_state("networkidle", timeout=10000)
+        except Exception:
+            pass
+
+        await _accept_youtube_consent(page)
+
+        try:
+            await page.wait_for_function(
+                """() => {
+                    const video = document.querySelector('video');
+                    return !!video && (!!video.src || video.readyState >= 1);
+                }""",
+                timeout=20000,
+            )
+            return True
+        except Exception:
+            await _log_page_diagnostics(page, "Playwright: video element never appeared")
+            return False
+    except Exception as exc:
+        logger.error(f"Playwright: failed loading player URL {source_url}: {exc}")
+        await _log_page_diagnostics(page, "Playwright: load failure diagnostics")
         return False
 
 
@@ -88,14 +183,19 @@ async def extract_screenshots_playwright(
     tmp_dir = tempfile.mkdtemp(prefix="pw_", dir=candidate_root)
     results = []
 
-    embed_url = (
-        f"https://www.youtube-nocookie.com/embed/{video_id}"
-        f"?autoplay=1&mute=1&controls=0&rel=0&modestbranding=1"
-    )
+    embed_urls = [
+        f"https://www.youtube.com/watch?v={video_id}",
+    ]
 
     try:
         async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(headless=True)
+            browser = await playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--autoplay-policy=no-user-gesture-required",
+                    "--disable-blink-features=AutomationControlled",
+                ],
+            )
             context = await browser.new_context(
                 viewport={"width": 1280, "height": 720},
                 user_agent=(
@@ -105,12 +205,16 @@ async def extract_screenshots_playwright(
                 ),
             )
             page = await context.new_page()
-            await page.goto(embed_url, wait_until="domcontentloaded", timeout=20000)
 
-            try:
-                await page.wait_for_selector("video", timeout=15000)
-            except Exception:
-                logger.error("Playwright: video element never appeared.")
+            player_ready = False
+            for embed_url in embed_urls:
+                logger.info(f"Playwright: loading player URL {embed_url}")
+                if await _wait_for_video_player(page, embed_url):
+                    player_ready = True
+                    break
+
+            if not player_ready:
+                await context.close()
                 await browser.close()
                 return []
 
@@ -119,16 +223,21 @@ async def extract_screenshots_playwright(
             )
             await asyncio.sleep(1.0)
 
-            for request in screenshot_requests:
+            for req_index, request in enumerate(screenshot_requests):
                 section_title = request.get("section_title", "")
                 caption = request.get("caption", "")
                 candidate_times = _get_candidate_times(request)
                 candidate_paths = []
+                request_id = request.get("request_id", f"req-{req_index}")
 
                 for index, seek_time in enumerate(candidate_times):
                     safe_title = "".join(char for char in section_title[:20] if char.isalnum() or char in ("_", "-")).strip()
                     title_part = safe_title or "section"
-                    candidate_path = os.path.join(tmp_dir, f"{video_id}_{title_part}_{index}.jpg")
+                    unique_suffix = uuid.uuid4().hex[:8]
+                    candidate_path = os.path.join(
+                        tmp_dir,
+                        f"{video_id}_{request_id}_{title_part}_{index}_{unique_suffix}.jpg"
+                    )
                     if await _capture_frame(page, seek_time, candidate_path):
                         candidate_paths.append((seek_time, candidate_path))
 
@@ -139,15 +248,18 @@ async def extract_screenshots_playwright(
                 path_only = [path for _, path in candidate_paths]
                 best_index = rank_frames(path_only, section_title=section_title or caption)
                 best_time, best_path = candidate_paths[best_index]
-
-                try:
-                    actual_time = await page.evaluate(
-                        "() => { const video = document.querySelector('video'); return video ? video.currentTime : null; }"
+                actual_seconds = int(round(best_time))
+                window_start = int(float(request.get("window_start", 0) or 0))
+                window_end = int(float(request.get("window_end", actual_seconds) or actual_seconds))
+                if actual_seconds < window_start or actual_seconds > window_end:
+                    logger.warning(
+                        "Chosen Playwright frame outside window for request_id=%s (selected=%s, window=%s-%s).",
+                        request_id,
+                        actual_seconds,
+                        window_start,
+                        window_end,
                     )
-                except Exception:
-                    actual_time = best_time
-
-                actual_seconds = int(round(actual_time or best_time))
+                    actual_seconds = max(window_start, min(actual_seconds, window_end))
                 final_name = f"{video_id}_{actual_seconds}.jpg"
                 final_path = os.path.join(static_dir, final_name)
                 shutil.copy2(best_path, final_path)
@@ -155,11 +267,17 @@ async def extract_screenshots_playwright(
                 results.append(
                     {
                         **request,
+                        "request_id": request_id,
+                        "target_seconds": int(request.get("target_seconds", request.get("seconds", actual_seconds)) or actual_seconds),
+                        "selected_seconds": actual_seconds,
                         "actual_seconds": actual_seconds,
+                        "quality_score": 0.0,
+                        "selection_reason": "playwright_clip_ranked",
                         "filename": final_name,
                     }
                 )
 
+            await context.close()
             await browser.close()
     except Exception as exc:
         logger.error(f"Playwright screenshot extraction failed: {exc}")

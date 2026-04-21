@@ -1,3 +1,4 @@
+import os
 import yt_dlp
 import logging
 import asyncio
@@ -9,13 +10,31 @@ logger = logging.getLogger(__name__)
 executor = ThreadPoolExecutor(max_workers=2)
 
 
+def _apply_ytdlp_cookie_settings(ydl_opts: dict) -> None:
+    """
+    Optionally enable yt-dlp cookie auth from env vars:
+    - YTDLP_COOKIES_FILE=absolute/or/relative/path/to/cookies.txt
+    - YTDLP_COOKIES_FROM_BROWSER=chrome[,profile][,keyring][,container]
+    """
+    cookie_file = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
+    if cookie_file:
+        ydl_opts["cookiefile"] = cookie_file
+
+    from_browser_raw = os.environ.get("YTDLP_COOKIES_FROM_BROWSER", "").strip()
+    if from_browser_raw:
+        parts = tuple(part.strip() for part in from_browser_raw.split(",") if part.strip())
+        if parts:
+            ydl_opts["cookiesfrombrowser"] = parts
+
+
 def _fetch_video_metadata_sync(video_url: str) -> Metadata:
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
-        'extract_flat': False,
+        'extract_flat': True,
         'proxy': '',
     }
+    _apply_ytdlp_cookie_settings(ydl_opts)
 
     with without_proxy_env():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:

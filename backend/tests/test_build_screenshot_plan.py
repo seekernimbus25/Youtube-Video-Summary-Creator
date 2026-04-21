@@ -192,3 +192,44 @@ def test_transcript_segments_anchor_when_no_chapters():
     deep_shot = next((shot for shot in plan if shot["section_title"] == "Deep Dive"), None)
     assert deep_shot is not None
     assert 50 <= deep_shot["window_start"] <= 60
+
+
+def test_screenshot_plan_includes_contract_fields():
+    from main import _build_screenshot_plan
+
+    summary = _make_summary_with_sections()
+    plan = _build_screenshot_plan(
+        summary,
+        duration_seconds=300,
+        chapters=[],
+        transcript_segments=[],
+    )
+
+    assert plan, "Expected at least one planned screenshot"
+    first = plan[0]
+    required_fields = {
+        "request_id",
+        "section_index",
+        "target_seconds",
+        "window_start",
+        "window_end",
+        "planner_confidence",
+        "planner_source",
+    }
+    assert required_fields.issubset(set(first.keys()))
+    assert 0.0 <= float(first["planner_confidence"]) <= 1.0
+    assert isinstance(first["request_id"], str) and first["request_id"]
+
+
+def test_screenshot_plan_request_ids_are_unique():
+    from main import _build_screenshot_plan
+
+    summary = _make_summary_with_sections()
+    plan = _build_screenshot_plan(
+        summary,
+        duration_seconds=300,
+        chapters=[],
+        transcript_segments=[],
+    )
+    request_ids = [item["request_id"] for item in plan]
+    assert len(request_ids) == len(set(request_ids))

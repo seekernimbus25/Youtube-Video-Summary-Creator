@@ -3,6 +3,9 @@ import json
 import logging
 import asyncio
 from anthropic import AsyncAnthropic, RateLimitError
+from openai import AsyncOpenAI
+from openai import RateLimitError as OpenAIRateLimitError
+from openai import APIError as OpenAIAPIError
 from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -10,16 +13,33 @@ logger = logging.getLogger(__name__)
 # Lazy initialization helper
 _client = None
 _model = None
+_provider = None
 
 def get_claude_client():
-    global _client, _model
+    global _client, _model, _provider
     if _client is None:
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise RuntimeError("CLAUDE_API_ERROR: ANTHROPIC_API_KEY not found in environment. Please check your .env file.")
-        _client = AsyncAnthropic(api_key=api_key)
-        _model = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
-    return _client, _model
+        _provider = os.environ.get("LLM_PROVIDER", "anthropic").strip().lower()
+
+        if _provider == "openrouter":
+            api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+            if not api_key:
+                raise RuntimeError("CLAUDE_API_ERROR: OPENROUTER_API_KEY not found in environment. Please check your .env file.")
+            _client = AsyncOpenAI(
+                api_key=api_key,
+                base_url="https://openrouter.ai/api/v1",
+            )
+            # Primary model; runtime fallbacks handled in generate_summary_and_mindmap().
+            _model = os.environ.get("OPENROUTER_MODEL", "openrouter/free").strip()
+            if not _model:
+                _model = "openrouter/free"
+        else:
+            api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+            if not api_key:
+                raise RuntimeError("CLAUDE_API_ERROR: ANTHROPIC_API_KEY not found in environment. Please check your .env file.")
+            _client = AsyncAnthropic(api_key=api_key)
+            _model = os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001").strip()
+
+    return _client, _model, _provider
 
 SYSTEM_PROMPT = """
 You are a world-class content analyst and knowledge synthesizer. Your job is to produce deep, insight-rich analysis of video transcripts — the kind of notes a brilliant student would take after watching the video twice and reflecting carefully.
@@ -171,22 +191,128 @@ QUALITY RULES:
     for attempt in range(max_retries):
         try:
             logger.info(f"Sending request to Claude...")
-            client, model = get_claude_client()
-            response = await client.messages.create(
-                model=model,
-                max_tokens=16000,
-                temperature=0,
-                system=SYSTEM_PROMPT,
-                messages=[
-                    {"role": "user", "content": user_prompt}
-                ]
-            )
-            
-            raw_content = response.content[0].text.strip()
+            client, model, provider = get_claude_client()
+            if provider == "openrouter":
+                fallback_raw = os.environ.get(
+                    "OPENROUTER_FALLBACK_MODELS",
+                    "qwen/qwen3-next-80b-a3b-instruct:free,meta-llama/llama-3.3-70b-instruct:free,google/gemma-4-31b-it:free"
+                ).strip()
+                fallback_models = [m.strip() for m in fallback_raw.split(",") if m.strip()]
+                use_low_cost_fallback = os.environ.get("OPENROUTER_USE_LOW_COST_FALLBACK", "true").strip().lower() in ("1", "true", "yes", "on")
+                low_cost_model = os.environ.get("OPENROUTER_LOW_COST_MODEL", "openai/gpt-4o-mini").strip()
+                candidate_models = []
+                low_cost_models = [low_cost_model] if (use_low_cost_fallback and low_cost_model) else []
+                for m in [model, *fallback_models, *low_cost_models]:
+                    if m and m not in candidate_models:
+                        candidate_models.append(m)
 
-            if response.stop_reason == "max_tokens":
-                logger.error("Claude response was truncated (max_tokens reached). Increase max_tokens.")
-                raise RuntimeError("CLAUDE_PARSE_ERROR: Response was cut off — increase max_tokens.")
+                last_router_error = None
+                raw_content = ""
+
+                def _extract_openrouter_text(message_obj: Any) -> str:
+                    """Handle OpenRouter/OpenAI content variants safely."""
+                    if message_obj is None:
+                        return ""
+
+                    content = getattr(message_obj, "content", None)
+                    if isinstance(content, str):
+                        return content.strip()
+
+                    # Some providers return content as a list of typed chunks.
+                    if isinstance(content, list):
+                        chunks = []
+                        for item in content:
+                            if isinstance(item, dict):
+                                txt = item.get("text")
+                                if txt:
+                                    chunks.append(str(txt))
+                            else:
+                                txt = getattr(item, "text", None)
+                                if txt:
+                                    chunks.append(str(txt))
+                        return "\n".join(chunks).strip()
+
+                    # Fallback for unusual SDK objects.
+                    txt = getattr(message_obj, "text", None)
+                    if txt:
+                        return str(txt).strip()
+                    return ""
+
+                for candidate_model in candidate_models:
+                    try:
+                        logger.info(f"Trying OpenRouter model: {candidate_model}")
+                        request_kwargs = {
+                            "model": candidate_model,
+                            "temperature": 0,
+                            "messages": [
+                                {"role": "system", "content": SYSTEM_PROMPT},
+                                {"role": "user", "content": user_prompt},
+                            ],
+                        }
+
+                        # Ask for strict JSON when supported.
+                        try:
+                            response = await client.chat.completions.create(
+                                **request_kwargs,
+                                response_format={"type": "json_object"},
+                            )
+                        except OpenAIAPIError as json_format_error:
+                            json_err = str(json_format_error).lower()
+                            if "response_format" in json_err or "unsupported" in json_err:
+                                logger.warning(
+                                    f"Model {candidate_model} does not support response_format=json_object. Retrying without it."
+                                )
+                                response = await client.chat.completions.create(**request_kwargs)
+                            else:
+                                raise
+
+                        choices = getattr(response, "choices", None) or []
+                        if not choices:
+                            logger.warning(f"OpenRouter model returned no choices: {candidate_model}. Trying next fallback.")
+                            continue
+
+                        choice = choices[0]
+                        message = getattr(choice, "message", None)
+                        raw_content = _extract_openrouter_text(message)
+                        finish_reason = getattr(choice, "finish_reason", None)
+                        if finish_reason == "length":
+                            logger.error("OpenRouter response was truncated (token limit reached).")
+                            raise RuntimeError("CLAUDE_PARSE_ERROR: Response was cut off — increase max_tokens/model context.")
+                        if not raw_content:
+                            logger.warning(f"OpenRouter model returned empty content: {candidate_model}. Trying next fallback.")
+                            continue
+                        break
+                    except OpenAIAPIError as e:
+                        err_text = str(e)
+                        status_code = getattr(e, "status_code", None)
+                        if status_code == 404 or "No endpoints found" in err_text:
+                            logger.warning(f"OpenRouter model unavailable: {candidate_model}. Trying next fallback.")
+                            last_router_error = e
+                            continue
+                        raise
+
+                if not raw_content:
+                    if last_router_error:
+                        raise RuntimeError(
+                            "CLAUDE_API_ERROR: No OpenRouter free model endpoint available. "
+                            "Set OPENROUTER_MODEL/OPENROUTER_FALLBACK_MODELS to currently available slugs."
+                        )
+                    raise RuntimeError("CLAUDE_API_ERROR: OpenRouter returned empty content.")
+            else:
+                response = await client.messages.create(
+                    model=model,
+                    max_tokens=16000,
+                    temperature=0,
+                    system=SYSTEM_PROMPT,
+                    messages=[
+                        {"role": "user", "content": user_prompt}
+                    ]
+                )
+                raw_content = response.content[0].text.strip()
+
+                if response.stop_reason == "max_tokens":
+                    logger.error("Claude response was truncated (max_tokens reached). Increase max_tokens.")
+                    raise RuntimeError("CLAUDE_PARSE_ERROR: Response was cut off — increase max_tokens.")
 
             # Defensive clean up just in case Claude wraps in markdown
             if raw_content.startswith("```json"):
@@ -199,13 +325,16 @@ QUALITY RULES:
             data = json.loads(raw_content)
             return data
             
-        except RateLimitError as e:
+        except (RateLimitError, OpenAIRateLimitError):
             if attempt < max_retries - 1:
                 logger.warning(f"Rate limited. Retrying in {backoff[attempt]} seconds...")
                 await asyncio.sleep(backoff[attempt])
             else:
                 logger.error("Rate limit retry exhausted.")
                 raise RuntimeError("CLAUDE_API_ERROR: Rate limits exhausted.")
+        except OpenAIAPIError as e:
+            logger.error(f"OpenRouter API error: {e}")
+            raise RuntimeError(f"CLAUDE_API_ERROR: {str(e)}")
         except json.JSONDecodeError as e:
             logger.error(f"Claude returned invalid JSON: {e}")
             raise RuntimeError("CLAUDE_PARSE_ERROR: Failed to parse AI response.")

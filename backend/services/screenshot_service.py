@@ -45,6 +45,7 @@ SCENE_OFFSETS = [0.35, 0.9, 1.6]
 BLUR_THRESHOLD = 45.0
 EDGE_DENSITY_THRESHOLD = 0.015
 TEXT_MATCH_ACCEPT_THRESHOLD = 35
+PRIMARY_OFFSETS = [-2.0, 0.0, 2.0, 4.0, -4.0]
 _ocr_engine = None
 
 # Thread pool for synchronous blocking tasks like yt-dlp and ffmpeg
@@ -312,42 +313,30 @@ def _build_candidate_seek_times(request: dict, duration_seconds: int, scene_seco
     window_start = max(0, min(int(request.get("window_start", fallback - 12) or (fallback - 12)), max_second))
     window_end = max(window_start, min(int(request.get("window_end", fallback + 12) or (fallback + 12)), max_second))
 
-    candidates = []
-    for sec in scene_seconds:
-        if sec < window_start or sec > window_end or sec in used_seconds:
-            continue
-        if candidates and abs(sec - candidates[-1]) < MIN_SCENE_GAP_SECONDS:
-            continue
-        candidates.append(sec)
-
-    candidates.sort(key=lambda sec: (abs(sec - preferred), abs(sec - fallback), sec))
-
     seek_times: list[float] = []
     seen_seek_keys = set()
 
-    for candidate in candidates:
-        for offset in SCENE_OFFSETS:
-            seek_time = max(float(window_start), min(float(candidate) + offset, float(window_end), float(max_second)))
-            seek_key = round(seek_time, 2)
-            if seek_key not in seen_seek_keys:
-                seen_seek_keys.add(seek_key)
-                seek_times.append(seek_time)
-
-    fallback_candidates = [
-        fallback,
-        preferred,
-        min(window_start + 2, window_end),
-        min(window_start + 5, window_end),
-        window_start,
-    ]
-    for candidate in fallback_candidates:
-        seek_time = max(float(window_start), min(float(candidate) + FRAME_OFFSET_AFTER_SCENE, float(window_end), float(max_second)))
+    target = max(0, min(int(request.get("target_seconds", preferred) or preferred), max_second))
+    for offset in PRIMARY_OFFSETS:
+        seek_time = max(float(window_start), min(float(target) + offset, float(window_end), float(max_second)))
         seek_key = round(seek_time, 2)
-        if candidate not in used_seconds and seek_key not in seen_seek_keys:
+        if int(round(seek_time)) not in used_seconds and seek_key not in seen_seek_keys:
             seen_seek_keys.add(seek_key)
             seek_times.append(seek_time)
 
-    return seek_times[:MAX_CANDIDATES_PER_REQUEST]
+    nearby_scene_seconds = [
+        sec for sec in scene_seconds
+        if window_start <= sec <= window_end and sec not in used_seconds
+    ]
+    nearby_scene_seconds.sort(key=lambda sec: abs(sec - target))
+    for sec in nearby_scene_seconds[:2]:
+        seek_time = max(float(window_start), min(float(sec) + FRAME_OFFSET_AFTER_SCENE, float(window_end), float(max_second)))
+        seek_key = round(seek_time, 2)
+        if seek_key not in seen_seek_keys:
+            seen_seek_keys.add(seek_key)
+            seek_times.append(seek_time)
+
+    return seek_times[:5]
 
 
 def _extract_frame_to_path(video_path: str, seek_time: float, output_path: str) -> bool:
@@ -451,55 +440,96 @@ def _choose_best_timestamp(request: dict, temp_video_path: str, duration_seconds
 
     best_non_rejected = None
     best_any = None
+    candidate_seconds = []
+    ranking_trace = []
 
     candidate_dir = tempfile.mkdtemp(prefix="shot_candidates_")
     try:
         for idx, seek_time in enumerate(candidate_seek_times):
             bounded_seek_time = max(0.0, min(float(seek_time), float(window_end), float(max_second)))
             candidate_second = int(round(bounded_seek_time))
+            candidate_seconds.append(candidate_second)
             candidate_path = os.path.join(candidate_dir, f"candidate_{idx}_{candidate_second}.jpg")
             if not _extract_frame_to_path(temp_video_path, bounded_seek_time, candidate_path):
                 continue
 
+            ffmpeg_quality = _score_frame_quality(temp_video_path, bounded_seek_time)
             ranking = _score_frame_file(candidate_path, request, used_fingerprints, bounded_seek_time)
+            if ffmpeg_quality.get("rejected", False):
+                ranking["rejected"] = True
+            quality_score = float(ranking["score"]) + float(ffmpeg_quality.get("score", 0.0) or 0.0)
             ranked = (
                 0 if _is_duplicate_fingerprint(ranking["fingerprint"], used_fingerprints) else 1,
-                ranking["score"],
+                quality_score,
                 -abs(candidate_second - int(request.get("preferred_seconds", candidate_second) or candidate_second)),
                 -candidate_second
             )
+            ranking_trace.append({
+                "second": candidate_second,
+                "rejected": bool(ranking["rejected"]),
+                "score": round(quality_score, 3),
+            })
 
             if best_any is None or ranked > best_any[0]:
-                best_any = (ranked, candidate_second, ranking["fingerprint"], bounded_seek_time, ranking.get("ocr_text", ""))
+                best_any = (
+                    ranked,
+                    candidate_second,
+                    ranking["fingerprint"],
+                    bounded_seek_time,
+                    ranking.get("ocr_text", ""),
+                    quality_score,
+                )
 
             if not ranking["rejected"]:
                 if best_non_rejected is None or ranked > best_non_rejected[0]:
-                    best_non_rejected = (ranked, candidate_second, ranking["fingerprint"], bounded_seek_time, ranking.get("ocr_text", ""))
+                    best_non_rejected = (
+                        ranked,
+                        candidate_second,
+                        ranking["fingerprint"],
+                        bounded_seek_time,
+                        ranking.get("ocr_text", ""),
+                        quality_score,
+                    )
     finally:
         shutil.rmtree(candidate_dir, ignore_errors=True)
 
     if best_non_rejected is not None:
         return {
+            "candidate_seconds": candidate_seconds,
+            "ranking_trace": ranking_trace,
+            "selected_seconds": best_non_rejected[1],
             "actual_seconds": best_non_rejected[1],
             "seek_time": best_non_rejected[3],
             "fingerprint": best_non_rejected[2],
             "ocr_text": best_non_rejected[4],
+            "quality_score": float(best_non_rejected[5]),
+            "selection_reason": "ffmpeg_non_rejected_best",
         }
     if best_any is not None:
         return {
+            "candidate_seconds": candidate_seconds,
+            "ranking_trace": ranking_trace,
+            "selected_seconds": best_any[1],
             "actual_seconds": best_any[1],
             "seek_time": best_any[3],
             "fingerprint": best_any[2],
             "ocr_text": best_any[4],
+            "quality_score": float(best_any[5]),
+            "selection_reason": "ffmpeg_best_any",
         }
 
     fallback = max(0, min(int(request.get("seconds", 0) or 0), max_second))
     fallback_seek = min(fallback + FRAME_OFFSET_AFTER_SCENE, window_end, float(max_second))
     return {
+        "candidate_seconds": candidate_seconds,
+        "ranking_trace": ranking_trace,
+        "selected_seconds": fallback,
         "actual_seconds": fallback,
         "seek_time": fallback_seek,
         "fingerprint": None,
         "ocr_text": "",
+        "quality_score": 0.0,
+        "selection_reason": "ffmpeg_fallback",
     }
 
 
@@ -568,7 +598,14 @@ async def extract_screenshots_for_video(video_url: str, video_id: str, duration_
                 used_fingerprints.append(fingerprint)
             resolved_requests.append({
                 **request,
+                "request_id": request.get("request_id", f"req-{len(resolved_requests)}"),
                 "actual_seconds": actual_sec,
+                "selected_seconds": int(selection.get("selected_seconds", actual_sec) or actual_sec),
+                "target_seconds": int(request.get("target_seconds", request.get("seconds", actual_sec)) or actual_sec),
+                "candidate_seconds": selection.get("candidate_seconds", []),
+                "ranking_trace": selection.get("ranking_trace", []),
+                "quality_score": float(selection.get("quality_score", 0.0) or 0.0),
+                "selection_reason": selection.get("selection_reason", ""),
                 "seek_time": float(selection.get("seek_time", actual_sec + FRAME_OFFSET_AFTER_SCENE) or (actual_sec + FRAME_OFFSET_AFTER_SCENE))
             })
 
@@ -585,6 +622,7 @@ async def extract_screenshots_for_video(video_url: str, video_id: str, duration_
                 return {
                     **request,
                     "actual_seconds": clamped_sec,
+                    "selected_seconds": clamped_sec,
                     "filename": output_filename
                 }
 
@@ -602,6 +640,7 @@ async def extract_screenshots_for_video(video_url: str, video_id: str, duration_
                 return {
                     **request,
                     "actual_seconds": clamped_sec,
+                    "selected_seconds": clamped_sec,
                     "filename": output_filename
                 }
             return None

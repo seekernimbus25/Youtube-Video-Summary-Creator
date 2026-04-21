@@ -23,6 +23,7 @@ from services.transcript_service import fetch_transcript
 from services.video_service import fetch_video_metadata
 from services.claude_service import generate_summary_and_mindmap
 from services.playwright_service import extract_screenshots_playwright, PLAYWRIGHT_AVAILABLE
+from services.screenshot_service import extract_screenshots_for_video, FFMPEG_AVAILABLE
 
 logger = get_logger("main")
 
@@ -61,33 +62,60 @@ def _find_chapter_for_section(section_title: str, section_start_sec: int, chapte
     return None
 
 
-def _find_segment_anchor(section_title: str, section_desc: str, segments: list) -> float | None:
-    """Use transcript word overlap to anchor a section to a nearby transcript segment."""
+def _find_segment_anchor(section_title: str, section_desc: str, section_start_sec: int, segments: list) -> dict | None:
+    """Use weighted transcript overlap to anchor a section to a nearby transcript segment."""
     if not segments:
         return None
 
-    section_words = {
+    title_words = {
         word.lower()
-        for word in re.split(r"\W+", f"{section_title} {section_desc}")
+        for word in re.split(r"\W+", section_title or "")
         if len(word) > 3
     }
-    if not section_words:
+    desc_words = {
+        word.lower()
+        for word in re.split(r"\W+", section_desc or "")
+        if len(word) > 3
+    }
+    all_words = title_words | desc_words
+    if not all_words:
         return None
 
-    best_score = 0
-    best_start = None
+    best = None
     for segment in segments:
+        segment_text = getattr(segment, "text", "") or ""
         segment_words = {
             word.lower()
-            for word in re.split(r"\W+", segment.text)
+            for word in re.split(r"\W+", segment_text)
             if len(word) > 3
         }
-        overlap = len(section_words & segment_words)
-        if overlap > best_score:
-            best_score = overlap
-            best_start = segment.start
+        if not segment_words:
+            continue
+        title_overlap = len(title_words & segment_words)
+        desc_overlap = len(desc_words & segment_words)
+        all_overlap = len(all_words & segment_words)
 
-    return best_start if best_score >= 2 else None
+        seg_start = float(getattr(segment, "start", 0.0) or 0.0)
+        time_distance = abs(seg_start - float(section_start_sec))
+        time_penalty = min(time_distance / 20.0, 8.0)
+        score = (title_overlap * 3.0) + (desc_overlap * 1.5) + (all_overlap * 0.8) - time_penalty
+
+        if best is None or score > best["score"]:
+            best = {
+                "start": seg_start,
+                "score": score,
+                "title_overlap": title_overlap,
+                "desc_overlap": desc_overlap,
+                "all_overlap": all_overlap,
+            }
+
+    if not best:
+        return None
+    if best["title_overlap"] < 1 and best["all_overlap"] < 2:
+        return None
+    if best["score"] < 1.2:
+        return None
+    return best
 
 
 def _build_screenshot_plan(
@@ -113,10 +141,12 @@ def _build_screenshot_plan(
         if chapter:
             start = max(0, min(int(chapter.start_time), max_second))
             end = max(start, min(int(chapter.end_time), max_second))
+            planner_source = "chapter"
+            planner_confidence = 0.92
         else:
-            segment_anchor = _find_segment_anchor(section_title, section_desc, transcript_segments)
+            segment_anchor = _find_segment_anchor(section_title, section_desc, claude_start, transcript_segments)
             if segment_anchor is not None:
-                start = max(0, min(int(segment_anchor), max_second))
+                start = max(0, min(int(segment_anchor["start"]), max_second))
                 if idx + 1 < len(sections):
                     next_start = int(
                         sections[idx + 1].get("timestamp_seconds", start + 60) or (start + 60)
@@ -124,6 +154,8 @@ def _build_screenshot_plan(
                     end = max(start, min(next_start - 1, max_second))
                 else:
                     end = max_second
+                planner_source = "transcript"
+                planner_confidence = min(0.9, 0.45 + (segment_anchor["score"] / 12.0))
             else:
                 start = claude_start
                 if idx + 1 < len(sections):
@@ -131,6 +163,8 @@ def _build_screenshot_plan(
                     end = max(start, min(next_start - 1, max_second))
                 else:
                     end = max_second
+                planner_source = "timestamp"
+                planner_confidence = 0.55
 
         section_context_parts = [
             section_title,
@@ -142,16 +176,43 @@ def _build_screenshot_plan(
             " ".join(keywords[:10]),
         ]
         section_windows.append({
+            "index": idx,
+            "request_id": f"sec-{idx}",
             "title": section_title,
             "title_norm": _normalize_title(section_title),
             "start": start,
             "end": end,
+            "claude_start": claude_start,
+            "source": planner_source,
+            "planner_confidence": round(float(planner_confidence), 3),
             "context": " ".join(part for part in section_context_parts if part).strip(),
         })
 
     used_seconds = set()
     covered_sections = set()
     section_by_title = {section["title_norm"]: section for section in section_windows if section["title_norm"]}
+
+    def find_section_for_title(raw_title: str) -> dict | None:
+        normalized = _normalize_title(raw_title)
+        if not normalized:
+            return None
+        direct = section_by_title.get(normalized)
+        if direct:
+            return direct
+        for section in section_windows:
+            title_norm = section["title_norm"]
+            if normalized in title_norm or title_norm in normalized:
+                return section
+        raw_tokens = {tok for tok in re.split(r"\W+", normalized) if len(tok) > 2}
+        best = None
+        best_overlap = 0
+        for section in section_windows:
+            sec_tokens = {tok for tok in re.split(r"\W+", section["title_norm"]) if len(tok) > 2}
+            overlap = len(raw_tokens & sec_tokens)
+            if overlap > best_overlap:
+                best_overlap = overlap
+                best = section
+        return best if best_overlap >= 2 else None
 
     def allocate_second(preferred: int, window: dict | None) -> int:
         if window:
@@ -180,8 +241,8 @@ def _build_screenshot_plan(
         return preferred
 
     planned = []
-    for item in requested:
-        section = section_by_title.get(_normalize_title(item.get("section_title", "")))
+    for req_idx, item in enumerate(requested):
+        section = find_section_for_title(item.get("section_title", ""))
         preferred = int(item.get("seconds", 0) or 0)
 
         if section:
@@ -191,14 +252,23 @@ def _build_screenshot_plan(
 
         second = allocate_second(preferred, section)
         used_seconds.add(second)
+        planner_confidence = float(section["planner_confidence"]) if section else 0.4
+        request_id = f"req-{req_idx}"
+        if section:
+            request_id = f"{section['request_id']}-req{req_idx}"
         planned.append({
+            "request_id": request_id,
+            "section_index": section["index"] if section else -1,
             "seconds": second,
+            "target_seconds": second,
             "preferred_seconds": preferred,
             "window_start": section["start"] if section else max(0, second - 12),
             "window_end": section["end"] if section else min(max_second, second + 12),
             "caption": item.get("caption", ""),
             "section_title": item.get("section_title", ""),
             "section_context": section["context"] if section else "",
+            "planner_source": section["source"] if section else "requested",
+            "planner_confidence": round(planner_confidence, 3),
         })
 
     target_count = min(max(len(section_windows), 6), 8)
@@ -211,13 +281,18 @@ def _build_screenshot_plan(
         second = allocate_second(min(section["start"] + 3, section["end"]), section)
         used_seconds.add(second)
         planned.append({
+            "request_id": section["request_id"],
+            "section_index": section["index"],
             "seconds": second,
+            "target_seconds": second,
             "preferred_seconds": second,
             "window_start": section["start"],
             "window_end": section["end"],
             "caption": f"{section['title']} screenshot",
             "section_title": section["title"],
             "section_context": section["context"],
+            "planner_source": section["source"],
+            "planner_confidence": round(float(section["planner_confidence"]), 3),
         })
         covered_sections.add(section["title_norm"])
 
@@ -267,6 +342,12 @@ def health_check():
     return {
         "status": "ok",
         "playwright_available": PLAYWRIGHT_AVAILABLE,
+        "llm_provider": os.environ.get("LLM_PROVIDER", "anthropic").strip().lower(),
+        "llm_model": (
+            os.environ.get("OPENROUTER_MODEL", "").strip()
+            if os.environ.get("LLM_PROVIDER", "anthropic").strip().lower() == "openrouter"
+            else os.environ.get("CLAUDE_MODEL", "claude-haiku-4-5-20251001").strip()
+        ),
         "version": "2.0.0"
     }
 
@@ -378,18 +459,34 @@ async def summarize(request: Request, body: SummarizeRequest):
             # Step 4
             yield yield_progress(4, "Extracting screenshots...")
             screenshot_data = []
-            if include_screenshots and PLAYWRIGHT_AVAILABLE:
+            if include_screenshots:
                 screenshot_plan = _build_screenshot_plan(
                     claude_val.get('summary', {}),
                     metadata.duration_seconds,
                     metadata.chapters,
                     transcript_result.segments,
                 )
-                extracted_files = await extract_screenshots_playwright(
-                    video_id=video_id,
-                    screenshot_requests=screenshot_plan,
-                    static_dir=os.path.join(STATIC_DIR, "screenshots")
-                )
+                extracted_files = []
+
+                if FFMPEG_AVAILABLE:
+                    extracted_files = await extract_screenshots_for_video(
+                        video_url=body.url,
+                        video_id=video_id,
+                        duration_seconds=metadata.duration_seconds,
+                        screenshot_requests=screenshot_plan,
+                        static_dir=os.path.join(STATIC_DIR, "screenshots"),
+                    )
+                    if not extracted_files and PLAYWRIGHT_AVAILABLE:
+                        logger.warning(
+                            "ffmpeg screenshot extraction returned no frames; falling back to Playwright pipeline."
+                        )
+
+                if not extracted_files and PLAYWRIGHT_AVAILABLE:
+                    extracted_files = await extract_screenshots_playwright(
+                        video_id=video_id,
+                        screenshot_requests=screenshot_plan,
+                        static_dir=os.path.join(STATIC_DIR, "screenshots")
+                    )
 
                 for shot in extracted_files:
                     actual_sec = int(shot.get('actual_seconds', 0) or 0)
@@ -400,14 +497,21 @@ async def summarize(request: Request, body: SummarizeRequest):
                         secs = clamped_sec % 60
                         time_fmt = f"{mins}:{secs:02d}"
                         screenshot_data.append({
+                            "request_id": shot.get("request_id", ""),
+                            "section_index": int(shot.get("section_index", -1) or -1),
+                            "target_seconds": int(shot.get("target_seconds", clamped_sec) or clamped_sec),
+                            "selected_seconds": clamped_sec,
+                            "planner_confidence": float(shot.get("planner_confidence", 0.0) or 0.0),
+                            "quality_score": float(shot.get("quality_score", 0.0) or 0.0),
+                            "selection_reason": shot.get("selection_reason", ""),
                             "seconds": clamped_sec,
                             "timestamp_formatted": time_fmt,
                             "caption": shot.get('caption', ''),
                             "url": f"/static/screenshots/{filename}",
                             "section_title": shot.get('section_title', '')
                         })
-            elif include_screenshots and not PLAYWRIGHT_AVAILABLE:
-                logger.warning("Screenshots requested but Playwright is not installed.")
+                if not extracted_files and not PLAYWRIGHT_AVAILABLE and not FFMPEG_AVAILABLE:
+                    logger.warning("Screenshots requested but neither Playwright nor ffmpeg is available.")
             
             # Step 5
             yield yield_progress(5, "Done!")

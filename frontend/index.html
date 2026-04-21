@@ -754,7 +754,7 @@
                             <a href="javascript:void(0)" onclick="downloadMindmapPng()" title="Download Mindmap" style="font-size: 1.1rem; color: var(--text-muted); text-decoration: none;">📥</a>
                         </div>
                     </div>
-                    <div id="mindmap" style="height: 450px; background: rgba(0,0,0,0.2); border-radius: 12px; cursor: move; position: relative;">
+                    <div id="mindmap" style="height: 450px; background: #f3ecff; border: 1px solid rgba(147, 51, 234, 0.15); border-radius: 12px; cursor: move; position: relative;">
                         <div class="mindmap-controls">
                             <button class="map-btn" onclick="zoomMindmap(1.2)" title="Zoom In">+</button>
                             <button class="map-btn" onclick="zoomMindmap(0.8)" title="Zoom Out">−</button>
@@ -1061,13 +1061,21 @@
                 const start = sec.timestamp_seconds || 0;
                 const end = (i + 1 < s.key_sections.length) ? (s.key_sections[i+1].timestamp_seconds || start + 120) : Infinity;
                 
-                const sectionShots = data.screenshots.filter(sh => 
-                    !usedShots.has(sh.seconds) && 
-                    ((sh.section_title && sec.title && sh.section_title.toLowerCase() === sec.title.toLowerCase()) || 
-                     (sh.seconds >= start && sh.seconds < end))
-                ).slice(0, 2);
+                const exactShots = data.screenshots.filter(sh =>
+                    !usedShots.has(`${sh.request_id || ''}:${sh.selected_seconds ?? sh.seconds}`) &&
+                    Number(sh.section_index) === i
+                );
+                const titleShots = data.screenshots.filter(sh =>
+                    !usedShots.has(`${sh.request_id || ''}:${sh.selected_seconds ?? sh.seconds}`) &&
+                    sh.section_title && sec.title && sh.section_title.toLowerCase() === sec.title.toLowerCase()
+                );
+                const fallbackShots = data.screenshots.filter(sh =>
+                    !usedShots.has(`${sh.request_id || ''}:${sh.selected_seconds ?? sh.seconds}`) &&
+                    sh.seconds >= start && sh.seconds < end
+                );
+                const sectionShots = [...exactShots, ...titleShots, ...fallbackShots].slice(0, 2);
                 
-                sectionShots.forEach(sh => usedShots.add(sh.seconds));
+                sectionShots.forEach(sh => usedShots.add(`${sh.request_id || ''}:${sh.selected_seconds ?? sh.seconds}`));
 
                 return `
                     <div class="section-breakdown-item">
@@ -1191,6 +1199,7 @@
 
         let currentZoom = null;
         let currentMindmapHomeTransform = d3.zoomIdentity;
+        let mindmapDensityMode = 'comfortable';
 
         // Export Dropdown Toggle
         function toggleExport(id, event) {
@@ -1377,6 +1386,13 @@
             svg.transition().duration(500).call(currentZoom.transform, currentMindmapHomeTransform);
         }
 
+        function toggleMindmapDensity() {
+            mindmapDensityMode = mindmapDensityMode === 'comfortable' ? 'compact' : 'comfortable';
+            if (currentData?.mindmap) {
+                renderMindmap(currentData.mindmap);
+            }
+        }
+
         function toggleFullscreen() {
             const el = document.getElementById('mindmap');
             if (!document.fullscreenElement) el.requestFullscreen();
@@ -1387,17 +1403,83 @@
             const container = document.getElementById('mindmap');
             container.innerHTML = `
                 <div class="mindmap-controls">
+                    <button class="map-btn" onclick="toggleMindmapDensity()" title="Toggle Density">${mindmapDensityMode === 'comfortable' ? 'C+' : 'C-'}</button>
                     <button class="map-btn" onclick="zoomMindmap(1.2)">+</button>
                     <button class="map-btn" onclick="zoomMindmap(0.8)">−</button>
                     <button class="map-btn" onclick="resetMindmap()">⊙</button>
                     <button class="map-btn" onclick="toggleFullscreen()">⛶</button>
                 </div>
             `;
+            const branchPalette = ['#9333ea', '#a855f7', '#7e22ce', '#6d28d9', '#c026d3', '#8b5cf6'];
             const WIDTH = container.clientWidth;
-            const HEIGHT = container.clientHeight || 500;
+            const root = d3.hierarchy(data);
+            const topLevel = root.children || [];
+            const isCompact = mindmapDensityMode === 'compact';
+            const verticalPadding = isCompact ? 24 : 30;
+            const topGroupGap = isCompact ? 14 : 24;
+            const innerSiblingGap = isCompact ? 10 : 14;
+            const rootChildGap = isCompact ? 12 : 18;
+            const subtreeSpanCache = new WeakMap();
+
+            const estimateNodeSpan = (node) => {
+                if (node.depth === 0) {
+                    return 84;
+                }
+                const labelOffset = node.depth === 1 ? 16 : 12;
+                const lineLimit = node.depth === 1 ? 20 : 24;
+                const lines = wrapLabel(node.data.label, lineLimit).slice(0, 2);
+                const lineHeight = node.depth === 1 ? 14 : 12;
+                const blockHeight = lines.length * lineHeight;
+                const pillHeight = blockHeight + 10;
+                const minSpan = node.depth === 1 ? 30 : 24;
+                return Math.max(pillHeight + labelOffset * 0.2, minSpan);
+            };
+
+            const getSubtreeSpan = (node) => {
+                if (subtreeSpanCache.has(node)) {
+                    return subtreeSpanCache.get(node);
+                }
+                const children = node.children || [];
+                const nodeSpan = estimateNodeSpan(node);
+                if (!children.length) {
+                    subtreeSpanCache.set(node, nodeSpan);
+                    return nodeSpan;
+                }
+                const childGap = node.depth === 0 ? rootChildGap : innerSiblingGap;
+                const childrenSpan = children.reduce((sum, child) => sum + getSubtreeSpan(child), 0) + Math.max(0, children.length - 1) * childGap;
+                const span = Math.max(nodeSpan, childrenSpan);
+                subtreeSpanCache.set(node, span);
+                return span;
+            };
+
+            const topLevelEntries = topLevel.map((node) => ({
+                node,
+                span: getSubtreeSpan(node)
+            }));
+            const sideAssignment = { left: [], right: [] };
+            const sideSpan = { left: 0, right: 0 };
+            const sideCount = { left: 0, right: 0 };
+
+            topLevelEntries.forEach((entry, index) => {
+                const preferred = index % 2 === 0 ? 'right' : 'left';
+                const alternate = preferred === 'right' ? 'left' : 'right';
+                const preferredProjected = sideSpan[preferred] + (sideCount[preferred] > 0 ? topGroupGap : 0);
+                const alternateProjected = sideSpan[alternate] + (sideCount[alternate] > 0 ? topGroupGap : 0);
+                const side = preferredProjected <= alternateProjected + 8 ? preferred : alternate;
+                sideAssignment[side].push(entry);
+                sideSpan[side] += entry.span;
+                sideCount[side] += 1;
+            });
+
+            const leftTotal = sideSpan.left + Math.max(0, sideAssignment.left.length - 1) * topGroupGap;
+            const rightTotal = sideSpan.right + Math.max(0, sideAssignment.right.length - 1) * topGroupGap;
+            const requiredHeight = Math.max(leftTotal, rightTotal, 350) + verticalPadding * 2;
+            const dynamicHeight = Math.max(450, Math.min(requiredHeight, 2600));
+            container.style.height = `${dynamicHeight}px`;
+
+            const HEIGHT = container.clientHeight || dynamicHeight;
             const CENTER_X = WIDTH / 2;
             const CENTER_Y = HEIGHT / 2;
-            const branchPalette = ['#60a5fa', '#818cf8', '#a78bfa', '#c084fc', '#f472b6', '#34d399'];
 
             const svg = d3.select('#mindmap').append('svg')
                 .attr('id', 'mindmap-svg')
@@ -1406,6 +1488,13 @@
                 .attr('viewBox', `0 0 ${WIDTH} ${HEIGHT}`);
 
             const g = svg.append('g').attr('id', 'mindmap-main-group');
+            svg.append('rect')
+                .attr('x', 0)
+                .attr('y', 0)
+                .attr('width', WIDTH)
+                .attr('height', HEIGHT)
+                .attr('fill', '#f3ecff')
+                .lower();
             
             currentZoom = d3.zoom()
                 .scaleExtent([0.1, 5])
@@ -1413,58 +1502,136 @@
 
             svg.call(currentZoom);
 
-            const root = d3.hierarchy(data);
-            const maxDepth = Math.max(root.height, 1);
-            const firstLevelCount = Math.max(root.children?.length || 0, 1);
-            const baseRadius = Math.min(WIDTH, HEIGHT) * 0.48;
-            const densityScale = firstLevelCount > 6 ? 1.08 : 1.18;
-            const radius = Math.max(baseRadius * densityScale, 250);
-            const tree = d3.tree()
-                .size([Math.PI * 2, radius])
-                .separation((a, b) => {
-                    if (a.depth === 1 || b.depth === 1) return a.parent === b.parent ? 2.8 : 4.0;
-                    return a.parent === b.parent ? 2.0 : 3.0;
-                });
-            tree(root);
-
             const descendants = root.descendants();
-            descendants.forEach((node) => {
-                const topLevelAncestor = node.ancestors().reverse()[1];
-                node.branchColor = topLevelAncestor
-                    ? branchPalette[topLevelAncestor.parent.children.indexOf(topLevelAncestor) % branchPalette.length]
-                    : '#a855f7';
-                node.adjustedAngle = node.x;
+            const usableHeight = Math.max(HEIGHT - verticalPadding * 2, 320);
+            const firstDepthGap = Math.max(Math.min(WIDTH * 0.23, 290), 210);
+            const depthGap = Math.max(Math.min(WIDTH * 0.17, 210), 145);
+
+            root.projectedX = 0;
+            root.projectedY = 0;
+            root.branchColor = '#7e22ce';
+
+            const assignBranchColor = (node, color) => {
+                node.branchColor = color;
+                (node.children || []).forEach((child) => assignBranchColor(child, color));
+            };
+
+            const layoutSubtree = (node, dir, x, topY, bottomY, depthFromTop) => {
+                node.projectedX = x;
+                node.projectedY = (topY + bottomY) / 2;
+                const children = node.children || [];
+                if (!children.length) return;
+
+                const childGap = node.depth === 0 ? rootChildGap : innerSiblingGap;
+                const totalChildrenSpan = children.reduce((sum, child) => sum + getSubtreeSpan(child), 0) + Math.max(0, children.length - 1) * childGap;
+                let cursor = node.projectedY - totalChildrenSpan / 2;
+                children.forEach((child) => {
+                    const segHeight = getSubtreeSpan(child);
+                    const childTop = cursor;
+                    const childBottom = cursor + segHeight;
+                    const nextX = x + dir * (depthFromTop === 1 ? depthGap : Math.max(depthGap - 10, 90));
+                    layoutSubtree(child, dir, nextX, childTop, childBottom, depthFromTop + 1);
+                    cursor += segHeight + childGap;
+                });
+            };
+
+            ['left', 'right'].forEach((sideName) => {
+                const items = sideAssignment[sideName];
+                if (!items.length) return;
+                const dir = sideName === 'right' ? 1 : -1;
+                const sideRequired = items.reduce((sum, item) => sum + item.span, 0) + Math.max(0, items.length - 1) * topGroupGap;
+                const sideLayoutHeight = Math.min(usableHeight, sideRequired);
+                let cursor = -sideLayoutHeight / 2;
+                items.forEach((item, index) => {
+                    const segment = item.span;
+                    const topY = cursor;
+                    const bottomY = cursor + segment;
+                    const color = branchPalette[index % branchPalette.length];
+                    assignBranchColor(item.node, color);
+                    layoutSubtree(item.node, dir, dir * firstDepthGap, topY, bottomY, 1);
+                    cursor += segment + topGroupGap;
+                });
             });
 
-            // Collision-aware angular spacing per depth to reduce label overlap.
-            for (let depth = 1; depth <= maxDepth; depth += 1) {
-                const depthNodes = descendants.filter((node) => node.depth === depth).sort((a, b) => a.adjustedAngle - b.adjustedAngle);
-                if (!depthNodes.length) continue;
+            const applyCollisionRelaxation = () => {
+                const pad = isCompact ? 6 : 9;
+                const rounds = 2;
+                const eligible = descendants.filter(d => d.depth > 0);
 
-                const groups = [
-                    depthNodes.filter((node) => node.adjustedAngle <= Math.PI),
-                    depthNodes.filter((node) => node.adjustedAngle > Math.PI)
-                ];
+                for (let round = 0; round < rounds; round += 1) {
+                    const groups = {};
+                    eligible.forEach((d) => {
+                        const sideKey = d.projectedX >= 0 ? 'right' : 'left';
+                        const key = `${sideKey}-${d.depth}`;
+                        if (!groups[key]) groups[key] = [];
+                        groups[key].push(d);
+                    });
 
-                groups.forEach((group) => {
-                    for (let i = 1; i < group.length; i += 1) {
-                        const previous = group[i - 1];
-                        const current = group[i];
-                        const labelLength = Math.max(String(current.data.label || '').length, 8);
-                        const minArc = Math.min(0.28, 0.06 + (labelLength / 180));
-                        const minGap = minArc * (radius / Math.max(current.y, 120));
-                        const delta = current.adjustedAngle - previous.adjustedAngle;
-                        if (delta < minGap) {
-                            current.adjustedAngle = previous.adjustedAngle + minGap;
+                    Object.values(groups).forEach((group) => {
+                        group.sort((a, b) => a.projectedY - b.projectedY);
+                        for (let i = 1; i < group.length; i += 1) {
+                            const prev = group[i - 1];
+                            const curr = group[i];
+                            const prevHalf = (prev.labelPillHeight || 24) / 2;
+                            const currHalf = (curr.labelPillHeight || 24) / 2;
+                            const minY = prev.projectedY + prevHalf + currHalf + pad;
+                            if (curr.projectedY < minY) {
+                                const delta = minY - curr.projectedY;
+                                curr.projectedY += delta;
+                            }
                         }
-                    }
-                });
-            }
 
-            descendants.forEach((node) => {
-                const projected = polarToCartesian(node.adjustedAngle, node.y);
-                node.projectedX = projected.x;
-                node.projectedY = projected.y;
+                        for (let i = group.length - 2; i >= 0; i -= 1) {
+                            const next = group[i + 1];
+                            const curr = group[i];
+                            const nextHalf = (next.labelPillHeight || 24) / 2;
+                            const currHalf = (curr.labelPillHeight || 24) / 2;
+                            const maxY = next.projectedY - nextHalf - currHalf - pad;
+                            if (curr.projectedY > maxY) {
+                                const delta = curr.projectedY - maxY;
+                                curr.projectedY -= delta;
+                            }
+                        }
+                    });
+                }
+            };
+
+            applyCollisionRelaxation();
+
+            // Pre-compute label pill geometry so links can connect to pill edges.
+            descendants.forEach((d) => {
+                if (d.depth === 0) return;
+                const isRightSide = d.projectedX >= 0;
+                const labelOffset = d.depth === 1 ? 16 : 12;
+                const lineLimit = d.depth === 1 ? 20 : 24;
+                const lines = wrapLabel(d.data.label, lineLimit).slice(0, 2);
+                const fontSize = d.depth === 1 ? 13 : 11;
+                const lineHeight = d.depth === 1 ? 14 : 12;
+                const blockHeight = lines.length * lineHeight;
+                const charFactor = d.depth === 1 ? 6.9 : 6.4;
+                const textWidth = Math.max(...lines.map(line => line.length), 7) * charFactor;
+                const pillWidth = textWidth + 20;
+                const pillHeight = blockHeight + 10;
+                const pillX = isRightSide ? labelOffset : -(labelOffset + pillWidth);
+                const pillY = -pillHeight / 2;
+
+                d.labelLines = lines;
+                d.labelFontSize = `${fontSize}px`;
+                d.labelLineHeight = lineHeight;
+                d.labelPillWidth = pillWidth;
+                d.labelPillHeight = pillHeight;
+                d.labelPillX = pillX;
+                d.labelPillY = pillY;
+                d.labelTextColor = d.depth === 1 ? '#5b21b6' : '#6b21a8';
+                d.labelFontWeight = d.depth === 1 ? '700' : '500';
+
+                const absLeft = d.projectedX + pillX;
+                const absRight = absLeft + pillWidth;
+                // Incoming edge faces root (center); outgoing faces away from root.
+                d.inAnchorX = isRightSide ? absLeft : absRight;
+                d.outAnchorX = isRightSide ? absRight : absLeft;
+                d.anchorY = d.projectedY;
+                d.dotOffsetX = d.inAnchorX - d.projectedX;
             });
 
             g.selectAll('.link')
@@ -1473,17 +1640,30 @@
                 .attr('fill', 'none')
                 .attr('stroke', d => {
                     const color = d.target.branchColor || '#a78bfa';
-                    return d.target.depth === 1 ? color : d3.color(color).copy({ opacity: 0.45 });
+                    return d.target.depth === 1 ? color : d3.color(color).copy({ opacity: 0.52 });
                 })
-                .attr('stroke-width', d => d.target.depth === 1 ? 3.4 : 1.8)
+                .attr('stroke-width', d => d.target.depth === 1 ? 2.0 : 1.2)
                 .attr('stroke-linecap', 'round')
-                .attr('opacity', d => d.target.depth === 1 ? 0.95 : 0.85)
+                .attr('opacity', d => d.target.depth === 1 ? 0.78 : 0.64)
                 .attr('d', (d) => {
-                    const source = polarToCartesian(d.source.adjustedAngle, d.source.y);
-                    const target = polarToCartesian(d.target.adjustedAngle, d.target.y);
-                    const midRadius = (d.source.y + d.target.y) / 2;
-                    const control = polarToCartesian((d.source.adjustedAngle + d.target.adjustedAngle) / 2, midRadius);
-                    return `M ${source.x},${source.y} Q ${control.x},${control.y} ${target.x},${target.y}`;
+                    const source = d.source.depth === 0
+                        ? { x: d.source.projectedX, y: d.source.projectedY }
+                        : { x: d.source.outAnchorX || d.source.projectedX, y: d.source.anchorY || d.source.projectedY };
+                    const target = d.target.depth === 0
+                        ? { x: d.target.projectedX, y: d.target.projectedY }
+                        : { x: d.target.inAnchorX || d.target.projectedX, y: d.target.anchorY || d.target.projectedY };
+
+                    if (d.target.depth === 1) {
+                        const dx = target.x - source.x;
+                        const c1x = source.x + dx * 0.42;
+                        const c2x = source.x + dx * 0.58;
+                        return `M ${source.x},${source.y} C ${c1x},${source.y} ${c2x},${target.y} ${target.x},${target.y}`;
+                    }
+
+                    const dx = target.x - source.x;
+                    const c1x = source.x + dx * 0.44;
+                    const c2x = source.x + dx * 0.56;
+                    return `M ${source.x},${source.y} C ${c1x},${source.y} ${c2x},${target.y} ${target.x},${target.y}`;
                 });
 
             const node = g.selectAll('.node')
@@ -1494,10 +1674,11 @@
 
             node.append('circle')
                 .filter(d => d.depth !== 0)
-                .attr('r', d => d.depth === 1 ? 4.5 : 2.8)
-                .attr('fill', d => d.depth === 1 ? d.branchColor : '#cbd5e1')
-                .attr('stroke', d => d.depth === 1 ? '#ffffff' : 'rgba(15, 23, 42, 0.85)')
-                .attr('stroke-width', d => d.depth === 1 ? 1.6 : 1.2);
+                .attr('cx', d => d.dotOffsetX || 0)
+                .attr('r', d => d.depth === 1 ? 2.8 : 1.6)
+                .attr('fill', d => d.depth === 1 ? d.branchColor : '#7e22ce')
+                .attr('stroke', '#ffffff')
+                .attr('stroke-width', d => d.depth === 1 ? 1.1 : 0.65);
 
             const rootGroup = node.filter(d => d.depth === 0);
             rootGroup.each(function(d) {
@@ -1516,10 +1697,10 @@
                     .attr('ry', 20)
                     .attr('width', pillWidth)
                     .attr('height', pillHeight)
-                    .attr('fill', 'rgba(9, 11, 24, 0.92)')
-                    .attr('stroke', 'rgba(168, 85, 247, 0.55)')
+                    .attr('fill', 'rgba(255, 255, 255, 0.96)')
+                    .attr('stroke', 'rgba(147, 51, 234, 0.58)')
                     .attr('stroke-width', 1.4)
-                    .style('filter', 'drop-shadow(0 8px 18px rgba(0, 0, 0, 0.35))');
+                    .style('filter', 'drop-shadow(0 4px 8px rgba(88, 28, 135, 0.12))');
 
                 lines.forEach((line, i) => {
                     el.append('text')
@@ -1527,7 +1708,7 @@
                         .attr('y', offsetY + 24 + i * lineHeight)
                         .attr('text-anchor', 'middle')
                         .text(line)
-                        .attr('fill', '#f8fafc')
+                        .attr('fill', '#6b21a8')
                         .style('font-size', '14px')
                         .style('font-weight', '700');
                 });
@@ -1536,38 +1717,43 @@
             node.each(function(d) {
                 if (d.depth === 0) return;
                 const el = d3.select(this);
-                const isRightSide = d.projectedX >= 0;
-                const anchor = isRightSide ? 'start' : 'end';
-                const labelOffset = d.depth === 1 ? 20 : 14;
-                const lineLimit = d.depth === 1 ? 17 : 22;
-                const lines = wrapLabel(d.data.label, lineLimit).slice(0, d.depth === 1 ? 2 : 3);
-                const textColor = d.depth === 1 ? d.branchColor : '#dbe7f5';
-                const fontSize = d.depth === 1 ? '13px' : '11px';
-                const fontWeight = d.depth === 1 ? '700' : '500';
-                const lineHeight = d.depth === 1 ? 14 : 12;
+                const lines = d.labelLines || [String(d.data.label || '')];
+                const lineHeight = d.labelLineHeight || 12;
                 const blockHeight = lines.length * lineHeight;
+                const pillWidth = d.labelPillWidth || 80;
+                const pillHeight = d.labelPillHeight || 24;
+                const pillX = d.labelPillX || 0;
+                const pillY = d.labelPillY || -12;
+
+                el.append('rect')
+                    .attr('x', pillX)
+                    .attr('y', pillY)
+                    .attr('rx', 11)
+                    .attr('ry', 11)
+                    .attr('width', pillWidth)
+                    .attr('height', pillHeight)
+                    .attr('fill', 'rgba(255, 255, 255, 0.97)')
+                    .attr('stroke', d.depth === 1 ? 'rgba(147, 51, 234, 0.58)' : 'rgba(147, 51, 234, 0.42)')
+                    .attr('stroke-width', d.depth === 1 ? 1.25 : 1.05)
+                    .style('filter', 'drop-shadow(0 2px 4px rgba(88, 28, 135, 0.08))');
 
                 lines.forEach((line, i) => {
                     el.append('text')
-                        .attr('x', isRightSide ? labelOffset : -labelOffset)
+                        .attr('x', pillX + pillWidth / 2)
                         .attr('y', i * lineHeight - (blockHeight - lineHeight) / 2)
-                        .attr('text-anchor', anchor)
+                        .attr('text-anchor', 'middle')
                         .text(line)
-                        .attr('fill', textColor)
-                        .style('font-size', fontSize)
-                        .style('font-weight', fontWeight)
-                        .clone(true).lower()
-                        .attr('stroke', 'rgba(5, 6, 15, 0.92)')
-                        .attr('stroke-width', d.depth === 1 ? 5 : 4)
-                        .attr('paint-order', 'stroke');
+                        .attr('fill', d.labelTextColor || '#5b21b6')
+                        .style('font-size', d.labelFontSize || '11px')
+                        .style('font-weight', d.labelFontWeight || '500');
                 });
             });
 
-            const rootBounds = rootGroup.node()?.getBBox();
-            const contentPadding = 140;
+            const contentBounds = g.node()?.getBBox();
+            const contentPadding = 70;
             const fitScale = Math.min(1, Math.min(
-                (WIDTH - 40) / ((radius * 2) + (rootBounds?.width || 0) + contentPadding),
-                (HEIGHT - 40) / ((radius * 2) + (rootBounds?.height || 0) + contentPadding)
+                (WIDTH - 36) / ((contentBounds?.width || WIDTH * 0.8) + contentPadding),
+                (HEIGHT - 36) / ((contentBounds?.height || HEIGHT * 0.8) + contentPadding)
             ));
             currentMindmapHomeTransform = d3.zoomIdentity
                 .translate(CENTER_X, CENTER_Y)
@@ -1580,17 +1766,25 @@
             const gEl = document.getElementById('mindmap-main-group');
             if (!svgEl || !gEl) return;
 
-            // Get the bounding box of the CONTENT, not the container
-            const bbox = gEl.getBBox();
-            const padding = 40;
-            
-            const serializer = new XMLSerializer();
-            // Clone and adjust for capture
+            const exportScale = 2;
+            const exportWidth = Math.max(Math.round(svgEl.clientWidth || svgEl.getBoundingClientRect().width), 1);
+            const exportHeight = Math.max(Math.round(svgEl.clientHeight || svgEl.getBoundingClientRect().height), 1);
+
+            // Export from the "home" transform for consistent full-map capture.
+            const homeTransform = currentMindmapHomeTransform || d3.zoomIdentity;
             const clone = svgEl.cloneNode(true);
-            clone.setAttribute('viewBox', `${bbox.x - padding} ${bbox.y - padding} ${bbox.width + padding*2} ${bbox.height + padding*2}`);
-            clone.setAttribute('width', bbox.width + padding*2);
-            clone.setAttribute('height', bbox.height + padding*2);
-            
+            const cloneGroup = clone.querySelector('#mindmap-main-group');
+            if (cloneGroup) {
+                cloneGroup.setAttribute('transform', homeTransform.toString());
+            }
+
+            // Use full viewport export to avoid bbox-related clipping.
+            clone.setAttribute('viewBox', `0 0 ${exportWidth} ${exportHeight}`);
+            clone.setAttribute('width', String(exportWidth));
+            clone.setAttribute('height', String(exportHeight));
+            clone.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+
+            const serializer = new XMLSerializer();
             let source = serializer.serializeToString(clone);
             if(!source.match(/^<svg[^>]+xmlns="http\:\/\/www\.w3\.org\/2000\/svg"/)){
                 source = source.replace(/^<svg/, '<svg xmlns="http://www.w3.org/2000/svg"');
@@ -1599,10 +1793,10 @@
             const img = new Image();
             img.onload = () => {
                 const canvas = document.createElement('canvas');
-                canvas.width = (bbox.width + padding*2) * 2;
-                canvas.height = (bbox.height + padding*2) * 2;
+                canvas.width = exportWidth * exportScale;
+                canvas.height = exportHeight * exportScale;
                 const ctx = canvas.getContext('2d');
-                ctx.fillStyle = '#05060f';
+                ctx.fillStyle = '#f3ecff';
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
                 ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
                 const a = document.createElement('a');

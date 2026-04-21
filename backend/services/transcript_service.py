@@ -12,6 +12,23 @@ logger = logging.getLogger(__name__)
 executor = ThreadPoolExecutor(max_workers=2)
 
 
+def _apply_ytdlp_cookie_settings(ydl_opts: dict) -> None:
+    """
+    Optionally enable yt-dlp cookie auth from env vars:
+    - YTDLP_COOKIES_FILE=absolute/or/relative/path/to/cookies.txt
+    - YTDLP_COOKIES_FROM_BROWSER=chrome[,profile][,keyring][,container]
+    """
+    cookie_file = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
+    if cookie_file:
+        ydl_opts["cookiefile"] = cookie_file
+
+    from_browser_raw = os.environ.get("YTDLP_COOKIES_FROM_BROWSER", "").strip()
+    if from_browser_raw:
+        parts = tuple(part.strip() for part in from_browser_raw.split(",") if part.strip())
+        if parts:
+            ydl_opts["cookiesfrombrowser"] = parts
+
+
 def _fetch_with_ytdlp(video_url: str, video_id: str) -> TranscriptResult:
     """
     Use yt-dlp to download auto-generated or manual subtitles.
@@ -31,6 +48,7 @@ def _fetch_with_ytdlp(video_url: str, video_id: str) -> TranscriptResult:
         'no_warnings': True,
         'proxy': '',
     }
+    _apply_ytdlp_cookie_settings(ydl_opts)
 
     import yt_dlp
     try:
@@ -129,14 +147,19 @@ def _parse_srt(content: str) -> str:
 
 def _segments_from_transcript_api_data(data: list) -> TranscriptResult:
     """Convert youtube-transcript-api data into a text + segment result."""
+    def _read_value(item, key, default=None):
+        if isinstance(item, dict):
+            return item.get(key, default)
+        return getattr(item, key, default)
+
     segments = [
         TranscriptSegment(
-            text=item['text'].replace('\n', ' ').strip(),
-            start=float(item['start']),
-            duration=float(item.get('duration', 0)),
+            text=str(_read_value(item, 'text', '')).replace('\n', ' ').strip(),
+            start=float(_read_value(item, 'start', 0) or 0),
+            duration=float(_read_value(item, 'duration', 0) or 0),
         )
         for item in data
-        if item.get('text', '').replace('\n', '').strip()
+        if str(_read_value(item, 'text', '')).replace('\n', '').strip()
     ]
     return TranscriptResult(
         text=' '.join(segment.text for segment in segments),
@@ -192,12 +215,15 @@ def _fetch_with_transcript_api(video_id: str) -> TranscriptResult:
             # 2. List fallback
             try:
                 transcript_list = api.list(video_id)
-                # Try finding en manual/auto
+                # Prefer English manual transcripts, then generated English transcripts.
                 try:
                     transcript = transcript_list.find_transcript(['en'])
                 except Exception:
-                    # Just take the first one available
-                    transcript = next(iter(transcript_list))
+                    try:
+                        transcript = transcript_list.find_generated_transcript(['en'])
+                    except Exception:
+                        # As a last resort, just take the first available transcript.
+                        transcript = next(iter(transcript_list))
                 
                 if transcript:
                     data = transcript.fetch()
