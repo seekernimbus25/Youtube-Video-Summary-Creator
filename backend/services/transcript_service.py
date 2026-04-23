@@ -167,6 +167,30 @@ def _segments_from_transcript_api_data(data: list) -> TranscriptResult:
     )
 
 
+def generate_timestamped_transcript(segments: list[TranscriptSegment], interval_seconds: int = 20) -> str:
+    """
+    Format transcript as '[MM:SS] text' segments.
+    Adds a timestamp entry every 'interval_seconds' to keep it concise but accurate.
+    """
+    if not segments:
+        return ""
+
+    output = []
+    last_timestamp = -999.0
+
+    for seg in segments:
+        if seg.start - last_timestamp >= interval_seconds:
+            mins = int(seg.start) // 60
+            secs = int(seg.start) % 60
+            timestamp_str = f"[{mins:02d}:{secs:02d}]"
+            output.append(f"\n{timestamp_str} {seg.text}")
+            last_timestamp = seg.start
+        else:
+            output.append(seg.text)
+
+    return " ".join(output).strip()
+
+
 def _parse_json3_with_segments(content: str) -> TranscriptResult:
     """Parse YouTube json3 subtitles while keeping segment timing."""
     try:

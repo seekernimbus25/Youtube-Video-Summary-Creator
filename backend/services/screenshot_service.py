@@ -423,7 +423,7 @@ def _score_frame_file(image_path: str, request: dict, used_fingerprints: List[in
     if not ocr_text and section_context:
         text_score *= 0.4
 
-    total_score = (text_score * 0.45) + (quality_score * 0.20) + (brightness_score * 0.10) + (proximity_score * 0.10) - duplicate_penalty
+    total_score = (text_score * 0.35) + (quality_score * 0.15) + (brightness_score * 0.10) + (proximity_score * 0.40) - duplicate_penalty
 
     return {
         "rejected": rejected and text_score < TEXT_MATCH_ACCEPT_THRESHOLD,

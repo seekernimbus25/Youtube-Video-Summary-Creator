@@ -34,9 +34,9 @@ def _get_candidate_times(request: dict) -> List[float]:
         return max(window_start, min(value, window_end))
 
     candidates = [
-        clamp(window_start + 3),
         clamp(preferred),
-        clamp((window_start + window_end) / 2),
+        clamp(preferred + 2.0),
+        clamp(preferred + 5.0),
     ]
 
     unique_candidates = []

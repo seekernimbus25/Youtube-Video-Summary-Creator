@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from utils.logger import get_logger
 from utils.validators import extract_video_id
 from models import SummarizeRequest, SSEEventResult, SSEEventError, ResultData
-from services.transcript_service import fetch_transcript
+from services.transcript_service import fetch_transcript, generate_timestamped_transcript
 from services.video_service import fetch_video_metadata
 from services.claude_service import generate_summary_and_mindmap
 from services.playwright_service import extract_screenshots_playwright, PLAYWRIGHT_AVAILABLE
@@ -157,9 +157,9 @@ def _build_screenshot_plan(
                 planner_source = "transcript"
                 planner_confidence = min(0.9, 0.45 + (segment_anchor["score"] / 12.0))
             else:
-                start = claude_start
+                start = max(0, claude_start - 30) # Broader window if no anchor
                 if idx + 1 < len(sections):
-                    next_start = int(sections[idx + 1].get("timestamp_seconds", start + 1) or (start + 1))
+                    next_start = int(sections[idx + 1].get("timestamp_seconds", claude_start + 60) or (claude_start + 60))
                     end = max(start, min(next_start - 1, max_second))
                 else:
                     end = max_second
@@ -448,12 +448,20 @@ async def summarize(request: Request, body: SummarizeRequest):
             transcript_result = await fetch_transcript(video_id)
             
             # Step 3
-            yield yield_progress(3, "Generating AI summary...")
+            timestamped_transcript = generate_timestamped_transcript(transcript_result.segments)
+            
+            user_api_key = request.headers.get("x-buddy-api-key")
+            user_provider = request.headers.get("x-buddy-provider")
+            user_model = request.headers.get("x-buddy-model")
+            
             claude_val = await generate_summary_and_mindmap(
                 title=metadata.title,
                 channel=metadata.channel,
                 duration=metadata.duration_formatted,
-                transcript=transcript_result.text
+                transcript=timestamped_transcript,
+                user_api_key=user_api_key,
+                user_provider=user_provider,
+                user_model=user_model
             )
             
             # Step 4
