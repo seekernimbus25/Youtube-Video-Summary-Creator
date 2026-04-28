@@ -11,7 +11,7 @@ const DEMO_DATA = {
   },
   screenshots: [
     { url: "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?auto=format&fit=crop&q=80&w=960", caption: "Patch cable routing — control vs audio" },
-    { url: "https://images.unsplash.com/photo-1519402014330-59c0d76d85d4?auto=format&fit=crop&q=80&w=960", caption: "Envelope shaping a VCA stage" },
+    { url: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&q=80&w=960", caption: "Envelope shaping a VCA stage" },
   ],
   pitch: "A hands-on tour of the modular synthesizer signal chain — from oscillators and filters to envelopes and modulation matrices — explained by building a patch from scratch and listening to each component isolate the sound.",
   insights: [
@@ -24,7 +24,7 @@ const DEMO_DATA = {
   sections: [
     { t: "00:00", title: "Cold open: one patch, four mutations", body: "Starts on a single VCO → VCF → VCA chain, then tweaks cutoff, resonance, and envelope amount to show how much timbral space three modules cover.", shots: [
       { src: "https://images.unsplash.com/photo-1558618666-fcd25c85cd64?auto=format&fit=crop&q=80&w=800", caption: "00:00 · Initial three-module voice" },
-      { src: "https://images.unsplash.com/photo-1519402014330-59c0d76d85d4?auto=format&fit=crop&q=80&w=800", caption: "00:45 · Same chain, resonance opened" },
+      { src: "https://images.unsplash.com/photo-1511379938547-c1f69419868d?auto=format&fit=crop&q=80&w=800", caption: "00:45 · Same chain, resonance opened" },
     ] },
     { t: "03:42", title: "Signal vs. control voltage", body: "Explains the two kinds of cables: audio-rate signal (what you hear) and control voltage (what you modulate). Every jack is secretly both." },
     { t: "09:18", title: "Oscillators and waveform palette", body: "Saw, square, triangle, sine — each one's harmonic content and what the filter will do to it. Pulse-width modulation as a first taste of modulation." },

@@ -2,6 +2,13 @@
 
 const { useState, useEffect, useRef, useMemo } = React;
 
+function isPortfolioDemoMode() {
+  if (typeof window === "undefined" || !window.location) return false;
+  const host = (window.location.hostname || "").toLowerCase();
+  if (!host) return false;
+  return host !== "localhost" && host !== "127.0.0.1";
+}
+
 const absUrl = (u) => (typeof window !== "undefined" && window.absMediaUrl ? window.absMediaUrl(u) : (u || ""));
 
 /** Deduplicate shot list by media URL (exact + time-window can match the same frame twice). */
@@ -132,6 +139,7 @@ function useTweaks() {
 
 function App() {
   const [tweaks, setTweaks] = useTweaks();
+  const demoOnlyMode = isPortfolioDemoMode();
 
   const [url, setUrl] = useState("https://www.videohost.example/watch?v=demo-modular-synth");
   const [screenshotsOn, setScreenshotsOn] = useState(true);
@@ -272,6 +280,11 @@ function App() {
       setState("error");
       return;
     }
+    if (demoOnlyMode && !url.toLowerCase().includes("demo")) {
+      setError("This public portfolio build only runs the sample demo video. Download the project from GitHub and run it on localhost to summarize real YouTube URLs with your own API credits.");
+      setState("error");
+      return;
+    }
     // if URL contains "demo", we use demo data anyway — same as the spec
     if (url.toLowerCase().includes("demo")) {
       run(DEMO_DATA);
@@ -391,10 +404,19 @@ bUDDY
           </div>
         </div>
 
+        <div className="portfolio-note" role="note" aria-live="polite">
+          <div className="portfolio-note-title">PORTFOLIO DEMO ONLY</div>
+          <p>
+            This hosted version is a dummy showcase and only plays curated demo summarizations.
+            Real YouTube URL processing is disabled here because it consumes API credits.
+            To test the full product with your own videos, download the project from GitHub and run it locally.
+          </p>
+        </div>
+
         {/* DEMO LINE */}
         <div className="demo-line">
           <Led on />
-          <span>NO CREDITS? Run a zero-API distillation from a sample payload.</span>
+          <span>Use the sample payload to preview extraction, screenshots, mindmaps, and summary formatting.</span>
           <button className="demo-btn" onClick={onDemo}>▸ RUN DEMO</button>
         </div>
 

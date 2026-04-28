@@ -1,5 +1,15 @@
 # YouTube Video Summariser
 
+Portfolio summary: this project turns long YouTube videos into structured notes, visual mind maps, and key frame captures. The full workflow is meant to be run locally with your own API key.
+
+## Portfolio Demo Note
+
+The public website version of this project is a portfolio demo, not the full product experience.
+
+- The hosted site only shows curated demo video summarizations.
+- Real YouTube URL summarization is disabled on the public deployment because it consumes API credits.
+- If you want to test the actual workflow with your own links, download the repository and run it on `localhost` with your own API key.
+
 An AI-powered tool that generates deep, structured summaries of YouTube videos using Claude. Paste a URL and get a full breakdown — key sections, insights, concepts, comparisons, a visual mind map, and optional video frame snapshots — without watching the video.
 
 ## Features
@@ -73,6 +83,9 @@ An AI-powered tool that generates deep, structured summaries of YouTube videos u
 5. Use **Copy as Markdown** or **Download .md** to export the summary
 
 ## Notes
+
+- The hosted portfolio UI is intentionally demo-only and will not summarize arbitrary public URLs
+- To test real end-to-end summarization, run the app locally with your own API credits
 
 - The video must have captions/subtitles available on YouTube (auto-generated captions work)
 - Screenshot extraction downloads a low-resolution copy of the video temporarily — it is deleted automatically after frames are extracted

@@ -286,13 +286,16 @@ body[data-tone="oxblood"] {
   padding-top: 4px;
 }
 @media (max-width: 700px) {
-  .hero-row-1 { grid-template-columns: 1fr; gap: 14px; }
+  .hero-row-1 { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .nav { flex-direction: column; align-items: stretch; }
+  .nav-right { flex-wrap: wrap; justify-content: center; }
 }
 
 .search-container {
   position: relative;
   display: flex;
   align-items: center;
+  min-width: 0;
   background:
     linear-gradient(180deg, #fbf8ee 0%, #e7e0cc 100%);
   border-radius: 40px;
@@ -313,6 +316,7 @@ body[data-tone="oxblood"] {
   color: var(--ink);
   outline: none;
   min-width: 0;
+  text-overflow: ellipsis;
 }
 .search-container input::placeholder {
   color: #9a9079;
@@ -441,6 +445,31 @@ body[data-tone="oxblood"] {
 }
 
 /* demo line */
+.portfolio-note {
+  margin-top: 18px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,.16);
+  background:
+    linear-gradient(180deg, rgba(255,122,26,.12) 0%, rgba(255,255,255,.28) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.5),
+    0 2px 4px rgba(0,0,0,.06);
+}
+.portfolio-note-title {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .16em;
+  color: var(--led-amber);
+  margin-bottom: 8px;
+}
+.portfolio-note p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
 .demo-line {
   margin-top: 18px;
   display: flex;
@@ -453,6 +482,15 @@ body[data-tone="oxblood"] {
   font-family: "JetBrains Mono", monospace;
   font-size: 12px;
   color: var(--ink-soft);
+}
+@media (max-width: 700px) {
+  .demo-line {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .demo-btn {
+    margin-left: 0;
+  }
 }
 .demo-btn {
   margin-left: auto;
@@ -558,6 +596,28 @@ body[data-tone="oxblood"] {
   margin-top: 8px;
   color: var(--muted);
   letter-spacing: .1em;
+}
+
+@media (max-width: 700px) {
+  .progress-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .progress-steps {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .progress-step {
+    flex: 1 1 auto;
+    font-size: 9px;
+    padding: 6px 8px;
+  }
+  .vu-readout {
+    flex-direction: column;
+    gap: 6px;
+  }
 }
 
 .error-card { border-left: 6px solid var(--led-red); }
