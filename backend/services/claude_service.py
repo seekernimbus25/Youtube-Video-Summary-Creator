@@ -1238,6 +1238,15 @@ def _normalize_concept(concept: Any) -> Dict[str, str]:
     }
 
 
+_BACKFILL_ARCHETYPES = [
+    "a surprising stat or fact",
+    "a practical implication",
+    "a counterintuitive claim",
+    "a recurring theme",
+    "a memorable moment",
+]
+
+
 def _backfill_summary_depth(payload: Dict[str, Any], duration: str = "", video_type: str = "general") -> Dict[str, Any]:
     """Normalize LLM output and backfill obviously missing depth fields."""
     if not isinstance(payload, dict):
@@ -1266,21 +1275,24 @@ def _backfill_summary_depth(payload: Dict[str, Any], duration: str = "", video_t
         if normalized.get("concept") and normalized.get("explanation")
     ]
 
-    if len(insights) < 6:
+    if len(insights) < 3:
+        backfilled = 0
         for section in sections:
-            timestamp = section.get("timestamp") or _format_seconds_label(section.get("timestamp_seconds", 0))
-            candidate_bits = []
-            if section.get("notable_detail"):
-                candidate_bits.append(section["notable_detail"])
-            candidate_bits.extend(section.get("sub_points", [])[:2])
-            for bit in candidate_bits:
-                text = f"{bit} This matters because it is a central point in {section['title']}. Evidence: {timestamp}."
-                if text not in insights:
-                    insights.append(text)
-                if len(insights) >= 8:
-                    break
-            if len(insights) >= 8:
+            if backfilled >= 2:
                 break
+            detail = (section.get("notable_detail") or "").strip()
+            if not detail:
+                detail = next(
+                    (str(sp).strip() for sp in section.get("sub_points", []) if str(sp).strip()),
+                    "",
+                )
+            if not detail:
+                continue
+            archetype = _BACKFILL_ARCHETYPES[backfilled % len(_BACKFILL_ARCHETYPES)]
+            bullet = f"{detail} — {archetype} from the {section['title']} discussion."
+            if bullet not in insights:
+                insights.append(bullet)
+                backfilled += 1
     summary["key_insights"] = {"bullets": insights}
 
     if not concepts:

@@ -426,3 +426,43 @@ def test_polish_prompt_uses_standard_cap_for_short_videos():
     )
     assert "at most 65%" in prompt
     assert "at most 55%" not in prompt
+
+
+def test_backfill_does_not_produce_mechanical_evidence_text():
+    payload = {
+        "summary": {
+            "key_sections": [
+                {
+                    "title": "Core Claim",
+                    "timestamp": "5:00",
+                    "timestamp_seconds": 300,
+                    "description": "The speaker argues against conventional wisdom.",
+                    "steps": [],
+                    "sub_points": [],
+                    "trade_offs": [],
+                    "notable_detail": "Conventional A/B testing underestimates long-term retention by 40%.",
+                },
+                {
+                    "title": "Practical Steps",
+                    "timestamp": "15:00",
+                    "timestamp_seconds": 900,
+                    "description": "A three-step framework for implementing the approach.",
+                    "steps": ["Segment your audience", "Run a holdout test", "Measure at 90 days"],
+                    "sub_points": ["The holdout must be at least 10% of traffic."],
+                    "trade_offs": [],
+                    "notable_detail": "",
+                },
+            ],
+            "key_insights": [],
+            "important_concepts": [],
+        }
+    }
+
+    result = _backfill_summary_depth(payload, duration="25:00")
+    bullets = result["summary"]["key_insights"]["bullets"]
+
+    assert len(bullets) <= 2
+    for bullet in bullets:
+        assert "This matters because it is a central point in" not in bullet
+        assert "Evidence:" not in bullet
+        assert " — " in bullet
