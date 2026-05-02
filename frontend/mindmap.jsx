@@ -1,306 +1,552 @@
-/* Horizontal mind-map tree — matches reference: center root, left/right branches, leaf cards */
+/* Indented tree mindmap renderer with dedicated export markup. */
 
-const Mindmap = ({ data }) => {
+function mmTrim(value) {
+  return String(value == null ? "" : value).replace(/\s+/g, " ").trim();
+}
+
+function mmLimitWords(value, maxWords, suffix = "...") {
+  const text = mmTrim(value);
+  if (!text) return "";
+  const words = text.split(/\s+/);
+  if (words.length <= maxWords) return text;
+  return `${words.slice(0, maxWords).join(" ")}${suffix}`;
+}
+
+function mmSplitSentences(value) {
+  const text = mmTrim(value);
+  if (!text) return [];
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => mmTrim(part))
+    .filter(Boolean);
+}
+
+function mmWrapLines(value, maxChars, maxLines) {
+  const words = mmTrim(value).split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  const lines = [];
+  let current = "";
+  words.forEach((word) => {
+    const candidate = current ? `${current} ${word}` : word;
+    if (candidate.length > maxChars && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = candidate;
+    }
+  });
+  if (current) lines.push(current);
+  if (lines.length <= maxLines) return lines;
+  const trimmed = lines.slice(0, maxLines);
+  trimmed[maxLines - 1] = mmLimitWords(trimmed[maxLines - 1], Math.max(3, Math.floor(maxChars / 2)));
+  return trimmed;
+}
+
+function mmCompactBranchTitle(value) {
+  const cleaned = mmTrim(value).replace(/^[\-\u2022\d.\s:]+/, "");
+  return mmLimitWords(cleaned || "Untitled", 7, "");
+}
+
+function mmCompactLeaf(value) {
+  return mmLimitWords(value, 18);
+}
+
+function mmCollectSectionLeaves(section) {
+  if (!section || typeof section !== "object") return [];
+  const leaves = [];
+
+  const description = mmCompactLeaf(section.desc || section.body || "");
+  if (description) leaves.push(description);
+
+  [section.steps, section.subPoints, section.tradeOffs].forEach((items) => {
+    if (!Array.isArray(items)) return;
+    items.forEach((item) => {
+      const text = mmCompactLeaf(item);
+      if (text) leaves.push(text);
+    });
+  });
+
+  if (section.notable) {
+    leaves.push(mmCompactLeaf(`Notable: ${section.notable}`));
+  }
+
+  return leaves.filter(Boolean).slice(0, 3);
+}
+
+function mmCollectNodeLeaves(node) {
+  if (node == null) return [];
+  if (typeof node === "string") {
+    return mmSplitSentences(node).map(mmCompactLeaf).slice(0, 3);
+  }
+  if (typeof node !== "object") return [];
+
+  if (Array.isArray(node.children) && node.children.length) {
+    return node.children
+      .map((child) => (typeof child === "object" ? (child.name ?? child.label ?? "") : child))
+      .map(mmCompactLeaf)
+      .filter(Boolean)
+      .slice(0, 3);
+  }
+
+  const raw = mmTrim(node.name ?? node.label ?? "");
+  return mmSplitSentences(raw).map(mmCompactLeaf).slice(0, 3);
+}
+
+function buildRenderableMindmap(data, context) {
+  const rootLabel = mmLimitWords(
+    data?.name || data?.label || context?.metadata?.title || "Video Summary",
+    10,
+    ""
+  );
+
+  const sections = Array.isArray(context?.sections) ? context.sections : [];
+  if (sections.length) {
+    return {
+      label: rootLabel,
+      branches: sections.slice(0, 6).map((section) => ({
+        label: mmCompactBranchTitle(section.title || section.time || "Section"),
+        leaves: mmCollectSectionLeaves(section),
+      })),
+    };
+  }
+
+  const rawChildren = Array.isArray(data?.children)
+    ? data.children
+    : Array.isArray(data?.nodes)
+      ? data.nodes
+      : [];
+
+  return {
+    label: rootLabel,
+    branches: rawChildren.slice(0, 6).map((node) => ({
+      label: mmCompactBranchTitle(node?.name ?? node?.label ?? node),
+      leaves: mmCollectNodeLeaves(node),
+    })),
+  };
+}
+
+function measureTextBlock(text, maxChars, maxLines, lineHeight, padY) {
+  const lines = mmWrapLines(text, maxChars, maxLines);
+  return {
+    lines,
+    height: Math.max(lineHeight + padY * 2, padY * 2 + lines.length * lineHeight),
+  };
+}
+
+function buildMindmapScene(input) {
+  const layout = {
+    padX: 56,
+    padY: 56,
+    rootW: 360,
+    rootH: 86,
+    branchW: 288,
+    branchH: 52,
+    leafW: 320,
+    leafIndent: 74,
+    leafPadX: 18,
+    leafPadY: 12,
+    leafLineH: 18,
+    branchPadX: 18,
+    branchPadY: 12,
+    branchLineH: 19,
+    branchToLeafGap: 12,
+    rowGap: 10,
+    branchGap: 20,
+    rootGap: 52,
+  };
+
+  const root = measureTextBlock(input?.label || "Video Summary", 28, 3, 26, 14);
+  const left = [];
+  const right = [];
+  (Array.isArray(input?.branches) ? input.branches : []).forEach((branch, index) => {
+    ((index % 2 === 0) ? right : left).push(branch);
+  });
+
+  const makeBlock = (branch) => {
+    const branchText = measureTextBlock(branch.label || "Section", 28, 2, layout.branchLineH, layout.branchPadY);
+    const leafNodes = (Array.isArray(branch.leaves) ? branch.leaves : [])
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((leaf) => {
+        const measured = measureTextBlock(leaf, 38, 3, layout.leafLineH, layout.leafPadY);
+        return {
+          text: leaf,
+          lines: measured.lines,
+          width: layout.leafW,
+          height: measured.height,
+        };
+      });
+
+    const leafHeight = leafNodes.reduce((sum, leaf) => sum + leaf.height, 0) + Math.max(0, leafNodes.length - 1) * layout.rowGap;
+    return {
+      label: branch.label,
+      lines: branchText.lines,
+      width: layout.branchW,
+      height: Math.max(layout.branchH, branchText.height),
+      leaves: leafNodes,
+      leafHeight,
+    };
+  };
+
+  const leftBlocks = left.map(makeBlock);
+  const rightBlocks = right.map(makeBlock);
+  const sideTotalHeight = (blocks) => blocks.reduce((sum, block) => sum + block.height + (block.leaves.length ? layout.branchToLeafGap + block.leafHeight : 0), 0) + Math.max(0, (blocks.length - 1) * layout.branchGap);
+  const contentHeight = Math.max(sideTotalHeight(leftBlocks), sideTotalHeight(rightBlocks), root.height);
+  const sceneHeight = contentHeight + layout.padY * 2;
+  const rootY = sceneHeight / 2 - root.height / 2;
+  const rootX = layout.padX + layout.leafW + layout.leafIndent + layout.branchW + layout.rootGap;
+  const sceneWidth = rootX + layout.rootW + layout.rootGap + layout.branchW + layout.leafIndent + layout.leafW + layout.padX;
+  const rootNode = {
+    x: rootX,
+    y: rootY,
+    width: layout.rootW,
+    height: root.height,
+    lines: root.lines,
+  };
+
+  return {
+    width: sceneWidth,
+    height: Math.max(sceneHeight, 540),
+    root: rootNode,
+    left: leftBlocks,
+    right: rightBlocks,
+    layout,
+  };
+}
+
+function mindmapPalette() {
+  const root = typeof document !== "undefined" ? getComputedStyle(document.body) : null;
+  const accent = (root?.getPropertyValue("--led-amber") || "#ff7a1a").trim();
+  return {
+    bg: "#0f0b08",
+    bg2: "#1a140f",
+    grid: "rgba(255,255,255,0.03)",
+    accent,
+    accentSoft: "rgba(255,122,26,0.38)",
+    accentGlow: "rgba(255,122,26,0.22)",
+    rootFillA: "#3c160e",
+    rootFillB: "#24100a",
+    rootStroke: "rgba(255,155,100,0.92)",
+    branchFill: "#201610",
+    branchStroke: "rgba(255,122,26,0.72)",
+    leafFill: "#2a1f17",
+    leafStroke: "rgba(255,255,255,0.08)",
+    text: "#f7efe7",
+    muted: "#e0cfc0",
+    connector: "rgba(255,122,26,0.82)",
+  };
+}
+
+function renderSceneIntoSvg(svgNode, scene, options = {}) {
+  const palette = mindmapPalette();
+  const layout = scene.layout || {};
+  const svg = d3.select(svgNode);
+  svg.selectAll("*").remove();
+
+  const viewportWidth = options.viewportWidth || scene.width;
+  const viewportHeight = options.viewportHeight || scene.height;
+  const interactive = options.interactive !== false;
+
+  svg
+    .attr("viewBox", `0 0 ${viewportWidth} ${viewportHeight}`)
+    .attr("width", options.width || "100%")
+    .attr("height", options.height || "100%")
+    .attr("preserveAspectRatio", "xMidYMid meet");
+
+  const defs = svg.append("defs");
+  const bg = defs.append("linearGradient").attr("id", options.bgId || "mm-bg").attr("x1", "0%").attr("y1", "0%").attr("x2", "100%").attr("y2", "100%");
+  bg.append("stop").attr("offset", "0%").attr("stop-color", palette.bg);
+  bg.append("stop").attr("offset", "100%").attr("stop-color", palette.bg2);
+
+  const rootGrad = defs.append("linearGradient").attr("id", options.rootId || "mm-root").attr("x1", "0%").attr("y1", "0%").attr("x2", "100%").attr("y2", "0%");
+  rootGrad.append("stop").attr("offset", "0%").attr("stop-color", palette.rootFillA);
+  rootGrad.append("stop").attr("offset", "100%").attr("stop-color", palette.rootFillB);
+
+  svg.append("rect")
+    .attr("width", viewportWidth)
+    .attr("height", viewportHeight)
+    .attr("fill", `url(#${options.bgId || "mm-bg"})`);
+
+  const grid = svg.append("g");
+  for (let x = 0; x < viewportWidth; x += 44) {
+    grid.append("line")
+      .attr("x1", x)
+      .attr("y1", 0)
+      .attr("x2", x)
+      .attr("y2", viewportHeight)
+      .attr("stroke", palette.grid)
+      .attr("stroke-width", 1);
+  }
+  for (let y = 0; y < viewportHeight; y += 44) {
+    grid.append("line")
+      .attr("x1", 0)
+      .attr("y1", y)
+      .attr("x2", viewportWidth)
+      .attr("y2", y)
+      .attr("stroke", palette.grid)
+      .attr("stroke-width", 1);
+  }
+
+  const viewport = svg.append("g").attr("class", "mindmap-viewport");
+  const sceneGroup = viewport.append("g").attr("class", "mindmap-scene");
+
+  const addPath = (points) => {
+    const line = d3.line().x((point) => point[0]).y((point) => point[1]).curve(d3.curveStepAfter);
+    sceneGroup.append("path")
+      .attr("d", line(points))
+      .attr("fill", "none")
+      .attr("stroke", palette.connector)
+      .attr("stroke-width", 2.2)
+      .attr("stroke-linecap", "round")
+      .attr("stroke-linejoin", "round");
+  };
+
+  const addTextBlock = (node, lines, style) => {
+    lines.forEach((line, index) => {
+      sceneGroup.append("text")
+        .attr("x", node.x + style.padX)
+        .attr("y", node.y + style.padY + style.lineHeight + index * style.lineHeight)
+        .attr("fill", style.color)
+        .attr("font-family", "Inter, Helvetica, sans-serif")
+        .attr("font-size", style.fontSize)
+        .attr("font-weight", style.fontWeight || 500)
+        .text(line);
+    });
+  };
+
+  sceneGroup.append("rect")
+    .attr("x", scene.root.x)
+    .attr("y", scene.root.y)
+    .attr("width", scene.root.width)
+    .attr("height", scene.root.height)
+    .attr("rx", 20)
+    .attr("fill", `url(#${options.rootId || "mm-root"})`)
+    .attr("stroke", palette.rootStroke)
+    .attr("stroke-width", 1.8);
+
+  addTextBlock(scene.root, scene.root.lines, {
+    padX: 24,
+    padY: 8,
+    lineHeight: 26,
+    fontSize: 19,
+    fontWeight: 700,
+    color: palette.text,
+  });
+
+  const renderSide = (blocks, side) => {
+    const isLeft = side === "left";
+    const branchX = isLeft
+      ? scene.root.x - (layout.rootGap || 52) - (layout.branchW || 288)
+      : scene.root.x + scene.root.width + (layout.rootGap || 52);
+    const leafX = isLeft
+      ? branchX - (layout.leafIndent || 74) - (layout.leafW || 320)
+      : branchX + (layout.branchW || 288) + (layout.leafIndent || 74);
+    const branchRootX = isLeft ? branchX + (layout.branchW || 288) : branchX;
+    const branchLeafX = isLeft ? branchX : branchX + (layout.branchW || 288);
+    const leafAnchorX = isLeft ? leafX + (layout.leafW || 320) : leafX;
+    const total = blocks.reduce((sum, block) => sum + block.height + (block.leaves.length ? (layout.branchToLeafGap || 12) + block.leafHeight : 0), 0) + Math.max(0, (blocks.length - 1) * (layout.branchGap || 20));
+    let cursorY = scene.root.y + scene.root.height / 2 - total / 2;
+
+    blocks.forEach((block) => {
+      const branchMidY = cursorY + block.height / 2;
+      const rootEdgeX = isLeft ? scene.root.x : scene.root.x + scene.root.width;
+      addPath([
+        [rootEdgeX, scene.root.y + scene.root.height / 2],
+        [rootEdgeX + (isLeft ? -28 : 28), scene.root.y + scene.root.height / 2],
+        [rootEdgeX + (isLeft ? -28 : 28), branchMidY],
+        [branchRootX, branchMidY],
+      ]);
+
+      sceneGroup.append("rect")
+        .attr("x", branchX)
+        .attr("y", cursorY)
+        .attr("width", layout.branchW)
+        .attr("height", block.height)
+        .attr("rx", 16)
+        .attr("fill", palette.branchFill)
+        .attr("stroke", palette.branchStroke)
+        .attr("stroke-width", 1.6);
+
+      sceneGroup.append("circle")
+        .attr("cx", isLeft ? branchX + layout.branchW - 14 : branchX + 14)
+        .attr("cy", branchMidY)
+        .attr("r", 4.5)
+        .attr("fill", palette.accent);
+
+      addTextBlock({ x: branchX, y: cursorY }, block.lines, {
+        padX: 22,
+        padY: 8,
+        lineHeight: 19,
+        fontSize: 12.5,
+        fontWeight: 700,
+        color: palette.text,
+      });
+
+      let leafY = cursorY + block.height + layout.branchToLeafGap;
+      block.leaves.forEach((leaf) => {
+        const leafMidY = leafY + leaf.height / 2;
+        addPath([
+          [branchLeafX, branchMidY],
+          [branchLeafX + (isLeft ? -18 : 18), branchMidY],
+          [branchLeafX + (isLeft ? -18 : 18), leafMidY],
+          [leafAnchorX, leafMidY],
+        ]);
+
+        sceneGroup.append("rect")
+          .attr("x", leafX)
+          .attr("y", leafY)
+          .attr("width", layout.leafW)
+          .attr("height", leaf.height)
+          .attr("rx", 14)
+          .attr("fill", palette.leafFill)
+          .attr("stroke", palette.leafStroke)
+          .attr("stroke-width", 1);
+
+        addTextBlock({ x: leafX, y: leafY }, leaf.lines, {
+          padX: 16,
+          padY: 8,
+          lineHeight: 18,
+          fontSize: 12,
+          color: palette.muted,
+        });
+
+        leafY += leaf.height + layout.rowGap;
+      });
+
+        cursorY += block.height + (block.leaves.length ? (layout.branchToLeafGap || 12) + block.leafHeight : 0) + (layout.branchGap || 20);
+      });
+  };
+
+  renderSide(scene.left || [], "left");
+  renderSide(scene.right || [], "right");
+
+  if (interactive) {
+    const zoom = d3.zoom().scaleExtent([0.55, 2.25]).on("zoom", (event) => {
+      viewport.attr("transform", event.transform);
+    });
+    svg.call(zoom);
+
+    const pad = 28;
+    const scale = Math.min(
+      1,
+      (viewportWidth - pad * 2) / scene.width,
+      (viewportHeight - pad * 2) / scene.height
+    );
+    const tx = (viewportWidth - scene.width * scale) / 2;
+    const ty = (viewportHeight - scene.height * scale) / 2;
+    const initialTransform = d3.zoomIdentity.translate(tx, ty).scale(scale);
+    svg.call(zoom.transform, initialTransform);
+    return { svg, zoom, initialTransform };
+  }
+
+  return { svg: null, zoom: null, initialTransform: null };
+}
+
+function buildMindmapExportMarkup(data, context) {
+  const rendered = buildRenderableMindmap(data, context);
+  const scene = buildMindmapScene(rendered);
+  const ns = "http://www.w3.org/2000/svg";
+  const tempSvg = document.createElementNS(ns, "svg");
+  renderSceneIntoSvg(tempSvg, scene, {
+    interactive: false,
+    viewportWidth: scene.width,
+    viewportHeight: scene.height,
+    width: String(scene.width),
+    height: String(scene.height),
+    bgId: "mm-bg-export",
+    rootId: "mm-root-export",
+  });
+  tempSvg.setAttribute("xmlns", ns);
+  tempSvg.setAttribute("width", String(scene.width));
+  tempSvg.setAttribute("height", String(scene.height));
+  tempSvg.setAttribute("viewBox", `0 0 ${scene.width} ${scene.height}`);
+  return {
+    svgMarkup: new XMLSerializer().serializeToString(tempSvg),
+    width: scene.width,
+    height: scene.height,
+  };
+}
+
+const Mindmap = ({ data, context }) => {
   const ref = React.useRef(null);
   const wrapRef = React.useRef(null);
   const zoomRef = React.useRef(null);
 
   React.useEffect(() => {
     if (!data || !ref.current || !wrapRef.current) return;
-    try {
-    const svg = d3.select(ref.current);
-    svg.selectAll("*").remove();
 
-    const getLabel = (n) => {
-      if (n == null) return "";
-      if (typeof n === "string") return n;
-      if (typeof n === "object" && (n.name != null || n.label != null)) {
-        return String(n.name != null ? n.name : n.label);
-      }
-      return "";
-    };
-    const rootLabel = getLabel(data) || "TOPIC";
-
-    const bbox = wrapRef.current.getBoundingClientRect();
-    const W = Math.max(900, bbox.width);
-    const H = Math.max(460, bbox.height);
-    svg.attr("viewBox", `0 0 ${W} ${H}`).attr("width", "100%").attr("height", "100%")
-       .attr("preserveAspectRatio", "xMidYMid meet");
-
-    // background — warm dark ink matching the inset panel aesthetic
-    const defs = svg.append("defs");
-    const bgGrad = defs.append("radialGradient").attr("id","mmBg").attr("cx","50%").attr("cy","50%").attr("r","75%");
-    bgGrad.append("stop").attr("offset","0%").attr("stop-color","#1a1610");
-    bgGrad.append("stop").attr("offset","100%").attr("stop-color","#0a0806");
-    svg.append("rect").attr("width", W).attr("height", H).attr("fill","url(#mmBg)");
-
-    // faint horizontal scan lines echo the grill texture
-    const scanPat = defs.append("pattern").attr("id","scan").attr("width", 4).attr("height", 4).attr("patternUnits","userSpaceOnUse");
-    scanPat.append("rect").attr("width", 4).attr("height", 4).attr("fill","transparent");
-    scanPat.append("line").attr("x1",0).attr("x2",4).attr("y1",0).attr("y2",0).attr("stroke","rgba(255,255,255,.025)");
-    svg.append("rect").attr("width", W).attr("height", H).attr("fill","url(#scan)");
-
-    const ledColor = (getComputedStyle(document.body).getPropertyValue("--led-amber") || "#ff7a1a").trim();
-    const ledGlow  = (getComputedStyle(document.body).getPropertyValue("--led-amber-glow") || "#ffbf6a").trim();
-    // Use amber/led-tinted palette to match faceplate accents
-    const branchColor = ledColor;
-    const branchTextColor = "#f4ead3";     // ivory, matches faceplate highlight
-    const leafBg = "#221d15";              // warm dark card, sits on black ink
-    const leafStroke = "rgba(255,180,100,0.22)";
-    const leafText = "#e8dec6";            // ivory body text
-
-    const g = svg.append("g");
-
-    const rawTop = (data && (data.children != null ? data.children : data.nodes)) || [];
-    const children = Array.isArray(rawTop) ? rawTop.slice() : [];
-    // alternate: even idx → right, odd → left — keeps balance visually like reference
-    const right = [], left = [];
-    children.forEach((c, i) => (i % 2 === 0 ? right : left).push(c));
-
-    // sizes
-    const rootW = Math.min(260, Math.max(180, (rootLabel.length * 10) + 40));
-    const rootH = 54;
-    const rootX = W / 2;
-    const rootY = H / 2;
-
-    const branchPillH = 40;
-    const branchPillPadX = 18;
-    const leafCardPadX = 14;
-    const leafCardPadY = 10;
-    const leafLineH = 15;
-    const leafCardW = 220;
-    const leafGap = 10;
-    const branchGap = 28;
-
-    // measure branch pill width by text length (before drawSide; avoids TDZ / ordering surprises)
-    const measureBranchWidth = (text) => {
-      const t = (text == null) ? "" : String(text);
-      return Math.min(240, Math.max(120, t.length * 8.2 + branchPillPadX * 2 + 26));
-    };
-
-    // compute leaf card heights by wrapping text
-    const wrap = (text, maxChars = 34) => {
-      const s = (text == null) ? "" : String(text);
-      const words = s.split(/\s+/);
-      const lines = [];
-      let line = "";
-      words.forEach(w => {
-        if ((line + " " + w).trim().length > maxChars) { lines.push(line.trim()); line = w; }
-        else line = (line + " " + w).trim();
-      });
-      if (line) lines.push(line);
-      return lines;
-    };
-
-    // Layout one side — compute y positions for branches and leaves
-    const layoutSide = (branches, sideSign) => {
-      // for each branch: compute total block height = max(branchPillH, leaves height)
-      const blocks = branches.map(branch => {
-        const leaves = (branch.children || []);
-        const leafBlocks = leaves.map(l => {
-          const lines = wrap(getLabel(l), 30);
-          const h = leafCardPadY * 2 + lines.length * leafLineH;
-          return { node: l, lines, h };
+    let raf = 0;
+    const paint = () => {
+      try {
+        const viewport = wrapRef.current.getBoundingClientRect();
+        const isNarrow = window.matchMedia && window.matchMedia("(max-width: 640px)").matches;
+        const targetWidth = Math.ceil(viewport.width);
+        const targetHeight = Math.ceil(viewport.height);
+        const rendered = buildRenderableMindmap(data, context);
+        const scene = buildMindmapScene(rendered);
+        const renderedView = renderSceneIntoSvg(ref.current, scene, {
+          interactive: true,
+          viewportWidth: Math.max(isNarrow ? 320 : 980, targetWidth),
+          viewportHeight: Math.max(isNarrow ? 320 : 560, targetHeight),
         });
-        const leafTotal = leafBlocks.reduce((s, lb) => s + lb.h, 0) + Math.max(0, (leafBlocks.length - 1) * leafGap);
-        return {
-          node: branch,
-          leafBlocks,
-          leafTotal,
-          height: Math.max(branchPillH + 20, leafTotal),
+
+        const exportPayload = buildMindmapExportMarkup(data, context);
+        wrapRef.current.__mindmapSource = { data, context };
+        wrapRef.current.__mindmapExport = exportPayload;
+        zoomRef.current = {
+          svg: renderedView.svg,
+          zoom: renderedView.zoom,
+          initialTransform: renderedView.initialTransform,
+          branchCount: rendered.branches.length,
         };
-      });
-      const total = blocks.reduce((s, b) => s + b.height, 0) + Math.max(0, (blocks.length - 1) * branchGap);
-      let y = rootY - total / 2;
-      blocks.forEach(b => {
-        b.yStart = y;
-        b.yCenter = y + b.height / 2;
-        // position each leaf inside the block, vertically centered on the branch block
-        let ly = b.yCenter - b.leafTotal / 2;
-        b.leafBlocks.forEach(lb => {
-          lb.yStart = ly;
-          lb.yCenter = ly + lb.h / 2;
-          ly += lb.h + leafGap;
-        });
-        y += b.height + branchGap;
-      });
-      // assign x positions
-      const branchX = rootX + sideSign * 170;   // distance from root to branch center
-      const leafX   = rootX + sideSign * 380;   // distance from root to inner edge of leaf card
-      blocks.forEach(b => {
-        b.x = branchX;
-        b.leafBlocks.forEach(lb => { lb.x = leafX; });
-      });
-      return blocks;
+      } catch (error) {
+        console.error("Mindmap layout failed", error);
+        wrapRef.current.__mindmapSource = { data, context };
+        wrapRef.current.__mindmapExport = null;
+      }
     };
 
-    const rightBlocks = layoutSide(right, +1);
-    const leftBlocks  = layoutSide(left,  -1);
-
-    // ---- draw links first (so they sit under nodes) ----
-    const linkG = g.append("g").attr("fill","none").attr("stroke", branchColor).attr("stroke-opacity", 0.55).attr("stroke-width", 1.4).attr("stroke-linecap","round");
-
-    const curve = (x1, y1, x2, y2) => {
-      const mx = (x1 + x2) / 2;
-      return `M ${x1},${y1} C ${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+    const schedulePaint = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(paint);
     };
 
-    const drawSide = (blocks, sideSign) => {
-      blocks.forEach(b => {
-        // root → branch
-        const rx = rootX + sideSign * (rootW / 2);
-        const bl = getLabel(b.node);
-        const bx = b.x - sideSign * (measureBranchWidth(bl) / 2);
-        linkG.append("path").attr("d", curve(rx, rootY, bx, b.yCenter));
+    schedulePaint();
 
-        // branch → each leaf
-        b.leafBlocks.forEach(lb => {
-          const bx2 = b.x + sideSign * (measureBranchWidth(bl) / 2);
-          const lx = lb.x - sideSign * 0; // leaf card inner edge
-          // actually, leaf card spans from lb.x to lb.x + sideSign*leafCardW
-          const leafInnerX = sideSign > 0 ? lb.x : lb.x;
-          linkG.append("path")
-            .attr("stroke", branchColor)
-            .attr("stroke-opacity", 0.32)
-            .attr("d", curve(bx2, b.yCenter, leafInnerX, lb.yCenter));
-        });
-      });
+    const ResizeObserverCtor = window.ResizeObserver;
+    const observer = ResizeObserverCtor ? new ResizeObserverCtor(() => schedulePaint()) : null;
+    if (observer) observer.observe(wrapRef.current);
+
+    return () => {
+      cancelAnimationFrame(raf);
+      if (observer) observer.disconnect();
     };
+  }, [data, context]);
 
-    drawSide(rightBlocks, +1);
-    drawSide(leftBlocks,  -1);
-
-    // ---- draw root pill — glowing LED button, matches DISTILL aesthetic ----
-    const rootGroup = g.append("g");
-    rootGroup.append("rect")
-      .attr("x", rootX - rootW / 2)
-      .attr("y", rootY - rootH / 2)
-      .attr("width", rootW)
-      .attr("height", rootH)
-      .attr("rx", rootH / 2)
-      .attr("fill", ledColor)
-      .attr("stroke", "#2b1605")
-      .attr("stroke-width", 1.6)
-      .attr("filter", "drop-shadow(0 0 14px " + ledGlow + ")");
-    // subtle top highlight sheen
-    rootGroup.append("rect")
-      .attr("x", rootX - rootW / 2 + 3)
-      .attr("y", rootY - rootH / 2 + 2)
-      .attr("width", rootW - 6)
-      .attr("height", 10)
-      .attr("rx", 6)
-      .attr("fill", "rgba(255,255,255,0.25)");
-    rootGroup.append("text")
-      .attr("x", rootX).attr("y", rootY)
-      .attr("text-anchor","middle").attr("dy","0.35em")
-      .attr("fill", "#ffffff")
-      .attr("font-family","Unica One, Helvetica, sans-serif")
-      .attr("font-weight", 400)
-      .attr("font-size", 17)
-      .attr("letter-spacing","0.1em")
-      .text(rootLabel.toUpperCase());
-
-    // ---- draw branch pills ----
-    const drawBranches = (blocks, sideSign) => {
-      blocks.forEach(b => {
-        const btext = getLabel(b.node) || "·";
-        const bw = measureBranchWidth(btext);
-        const bh = branchPillH;
-        const bx = b.x - bw / 2;
-        const by = b.yCenter - bh / 2;
-
-        // pill — warm dark with amber accent, like a recessed LED label
-        const gr = g.append("g").style("cursor","pointer");
-        gr.append("rect")
-          .attr("x", bx).attr("y", by)
-          .attr("width", bw).attr("height", bh)
-          .attr("rx", bh / 2)
-          .attr("fill", "#15110b")
-          .attr("stroke", branchColor)
-          .attr("stroke-opacity", 0.85)
-          .attr("stroke-width", 1.4);
-
-        // LED indicator dot on the pill
-        gr.append("circle")
-          .attr("cx", bx + 18).attr("cy", b.yCenter).attr("r", 5)
-          .attr("fill", ledColor)
-          .attr("filter", "drop-shadow(0 0 4px " + ledGlow + ")");
-
-        gr.append("text")
-          .attr("x", bx + 32).attr("y", b.yCenter)
-          .attr("dy","0.35em")
-          .attr("fill", branchTextColor)
-          .attr("font-family","JetBrains Mono, ui-monospace, monospace")
-          .attr("font-weight", 600)
-          .attr("font-size", 11)
-          .attr("letter-spacing","0.1em")
-          .attr("text-transform","uppercase")
-          .text(btext.toUpperCase());
-
-        // leaves
-        b.leafBlocks.forEach(lb => {
-          const cardX = sideSign > 0 ? lb.x : lb.x - leafCardW;
-          const cardY = lb.yStart;
-          const gl = g.append("g");
-          gl.append("rect")
-            .attr("x", cardX).attr("y", cardY)
-            .attr("width", leafCardW).attr("height", lb.h)
-            .attr("rx", 6)
-            .attr("fill", leafBg)
-            .attr("stroke", leafStroke)
-            .attr("stroke-width", 1);
-          // thin amber left-edge accent, like the LED side-bar
-          gl.append("rect")
-            .attr("x", sideSign > 0 ? cardX : cardX + leafCardW - 2)
-            .attr("y", cardY + 6)
-            .attr("width", 2)
-            .attr("height", lb.h - 12)
-            .attr("fill", ledColor).attr("opacity", 0.7);
-
-          const tx = cardX + leafCardPadX;
-          lb.lines.forEach((ln, i) => {
-            gl.append("text")
-              .attr("x", tx)
-              .attr("y", cardY + leafCardPadY + (i + 1) * leafLineH - 4)
-              .attr("fill", leafText)
-              .attr("font-family","Inter, Helvetica, sans-serif")
-              .attr("font-size", 11)
-              .attr("letter-spacing","0.01em")
-              .text(ln);
-          });
-        });
-      });
-    };
-
-    drawBranches(rightBlocks, +1);
-    drawBranches(leftBlocks, -1);
-
-    // ---- zoom ----
-    const zoom = d3.zoom().scaleExtent([0.45, 2.5])
-      .on("zoom", (e) => g.attr("transform", e.transform));
-    svg.call(zoom);
-    zoomRef.current = { svg, zoom };
-    } catch (err) {
-      console.error("Mindmap layout failed", err);
-    }
-  }, [data]);
-
-  const reset = () => zoomRef.current?.svg.transition().duration(350)
-    .call(zoomRef.current.zoom.transform, d3.zoomIdentity);
-  const zoomIn  = () => zoomRef.current?.svg.transition().call(zoomRef.current.zoom.scaleBy, 1.3);
-  const zoomOut = () => zoomRef.current?.svg.transition().call(zoomRef.current.zoom.scaleBy, 0.77);
+  const reset = () => zoomRef.current?.svg?.transition().duration(300)
+    .call(zoomRef.current.zoom.transform, zoomRef.current.initialTransform || d3.zoomIdentity);
+  const zoomIn = () => zoomRef.current?.svg?.transition().call(zoomRef.current.zoom.scaleBy, 1.2);
+  const zoomOut = () => zoomRef.current?.svg?.transition().call(zoomRef.current.zoom.scaleBy, 0.84);
+  const branchCount = Array.isArray(context?.sections) && context.sections.length
+    ? Math.min(context.sections.length, 6)
+    : Array.isArray(data?.children)
+      ? Math.min(data.children.length, 6)
+      : 0;
 
   return (
     <div className="mindmap-wrap" id="mindmap-export-root" ref={wrapRef}>
       <svg ref={ref} />
       <div className="map-controls">
         <button className="map-ctrl" onClick={zoomIn} title="Zoom in">+</button>
-        <button className="map-ctrl" onClick={zoomOut} title="Zoom out">−</button>
-        <button className="map-ctrl" onClick={reset} title="Reset">⟲</button>
+        <button className="map-ctrl" onClick={zoomOut} title="Zoom out">-</button>
+        <button className="map-ctrl" onClick={reset} title="Reset">R</button>
       </div>
-      <div className="map-legend">◦ DRAG TO PAN · SCROLL TO ZOOM · {data?.children?.length ?? 0} BRANCHES</div>
+      <div className="map-legend">DRAG TO PAN · SCROLL TO ZOOM · {branchCount} SECTIONS</div>
     </div>
   );
 };
 
-Object.assign(window, { Mindmap });
+Object.assign(window, {
+  Mindmap,
+  buildMindmapExportMarkup,
+});

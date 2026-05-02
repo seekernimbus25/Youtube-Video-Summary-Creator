@@ -13,6 +13,7 @@ build/
 
 # Claude/AI tooling
 .claude/
+.superpowers/
 
 # Environment — NEVER push secrets
 .env
@@ -29,6 +30,11 @@ ENV/
 *.log
 *.tmp
 *.bak
+.pytest_cache/
+pytest-cache-files-*/
+backend/.pytest_cache/
+backend/tests/_tmp/
+backend/tests/__pycache__/
 
 # Screenshots extracted by the app (runtime data)
 backend/static/screenshots/

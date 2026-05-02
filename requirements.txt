@@ -1,11 +1,9 @@
 fastapi==0.135.3
 anthropic==0.89.0
+openai
 yt-dlp==2026.3.17
 youtube-transcript-api==1.2.4
 aiofiles==25.1.0
 python-multipart==0.0.24
 pydantic==2.12.5
 python-dotenv==1.2.2
-opencv-python-headless==4.12.0.88
-rapidfuzz==3.14.1
-scenedetect==0.6.7.1

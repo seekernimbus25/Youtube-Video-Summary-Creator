@@ -7,26 +7,10 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from models import TranscriptSegment, TranscriptResult
 from utils.network import without_proxy_env
+from utils.ytdlp_auth import run_ytdlp_with_auth
 
 logger = logging.getLogger(__name__)
 executor = ThreadPoolExecutor(max_workers=2)
-
-
-def _apply_ytdlp_cookie_settings(ydl_opts: dict) -> None:
-    """
-    Optionally enable yt-dlp cookie auth from env vars:
-    - YTDLP_COOKIES_FILE=absolute/or/relative/path/to/cookies.txt
-    - YTDLP_COOKIES_FROM_BROWSER=chrome[,profile][,keyring][,container]
-    """
-    cookie_file = os.environ.get("YTDLP_COOKIES_FILE", "").strip()
-    if cookie_file:
-        ydl_opts["cookiefile"] = cookie_file
-
-    from_browser_raw = os.environ.get("YTDLP_COOKIES_FROM_BROWSER", "").strip()
-    if from_browser_raw:
-        parts = tuple(part.strip() for part in from_browser_raw.split(",") if part.strip())
-        if parts:
-            ydl_opts["cookiesfrombrowser"] = parts
 
 
 def _fetch_with_ytdlp(video_url: str, video_id: str) -> TranscriptResult:
@@ -48,13 +32,16 @@ def _fetch_with_ytdlp(video_url: str, video_id: str) -> TranscriptResult:
         'no_warnings': True,
         'proxy': '',
     }
-    _apply_ytdlp_cookie_settings(ydl_opts)
 
     import yt_dlp
     try:
         with without_proxy_env():
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([video_url])
+            def _download(variant_opts: dict):
+                with yt_dlp.YoutubeDL(variant_opts) as ydl:
+                    ydl.download([video_url])
+                    return None
+
+            run_ytdlp_with_auth(ydl_opts, _download, logger)
 
         # yt-dlp saves subtitles as {id}.{lang}.json3
         # Look for any subtitle file that was downloaded
@@ -270,6 +257,7 @@ async def fetch_transcript(video_id: str) -> TranscriptResult:
     """
     video_url = f"https://www.youtube.com/watch?v={video_id}"
     loop = asyncio.get_running_loop()
+    auth_error = None
 
     # Method 1: yt-dlp (most reliable for auto-generated subs)
     try:
@@ -284,6 +272,8 @@ async def fetch_transcript(video_id: str) -> TranscriptResult:
             logger.warning("yt-dlp returned very short or empty transcript, trying fallback.")
     except Exception as e:
         logger.warning(f"yt-dlp transcript fetch failed: {e}")
+        if str(e).startswith("YOUTUBE_AUTH_REQUIRED:"):
+            auth_error = e
 
     # Method 2: youtube-transcript-api fallback
     try:
@@ -297,4 +287,6 @@ async def fetch_transcript(video_id: str) -> TranscriptResult:
     except Exception as e:
         logger.warning(f"youtube-transcript-api also failed: {e}")
 
+    if auth_error is not None:
+        raise RuntimeError(str(auth_error))
     raise RuntimeError("TRANSCRIPT_UNAVAILABLE: Could not fetch transcript using any method. The video may have no captions available.")

@@ -11,67 +11,180 @@ function isPortfolioDemoMode() {
 
 const absUrl = (u) => (typeof window !== "undefined" && window.absMediaUrl ? window.absMediaUrl(u) : (u || ""));
 
-/** Deduplicate shot list by media URL (exact + time-window can match the same frame twice). */
-function uniqueShotsByUrl(rawList, cap) {
-  const out = [];
-  const seen = new Set();
-  for (const sh of rawList) {
-    const u = absUrl(sh.url || sh.src);
-    if (!u || seen.has(u)) continue;
-    seen.add(u);
-    out.push({ src: u, caption: sh.caption || "" });
-    if (cap != null && out.length >= cap) break;
+function formatInsight(ins) {
+  if (ins == null) return "";
+  if (typeof ins === "string") return ins.trim();
+  if (typeof ins === "object") {
+    const claim = String(ins.claim || "").trim();
+    const why = String(ins.why_it_matters || ins.why || ins.mechanism || "").trim();
+    const timestamp = String(ins.timestamp_reference || ins.timestamp || "").trim();
+    const parts = [];
+    if (claim) parts.push(claim);
+    if (why) parts.push(`Why it matters: ${why}`);
+    if (timestamp) parts.push(`Evidence: ${timestamp}`);
+    return parts.join(" ");
   }
-  return out;
+  return String(ins).trim();
 }
 
-/** Map SSE/API payload to the React `result` shape. Avoids duplicate screenshots: same frame in both section_index and time-window, and gallery vs. key sections. */
-function mapApiResultToView(rawData) {
-  const s = rawData.summary;
-  const allScreens = rawData.screenshots || [];
-  const keySections = s.key_sections || [];
-  const usedInSections = new Set();
-  const sections = keySections.map((sec, i) => {
-    const start = sec.timestamp_seconds || 0;
-    const end = (i + 1 < keySections.length) ? (keySections[i+1].timestamp_seconds || start + 120) : Infinity;
-    const exactShots = allScreens.filter((sh) => Number(sh.section_index) === i);
-    const fallbackShots = allScreens.filter((sh) => sh.seconds >= start && sh.seconds < end);
-    const merged = uniqueShotsByUrl([...exactShots, ...fallbackShots], 2);
-    merged.forEach((m) => usedInSections.add(m.src));
-    return {
-      id: "sec-" + i,
-      title: sec.title,
-      time: sec.timestamp,
-      desc: sec.description,
-      steps: sec.steps || [],
-      notable: sec.notable_detail,
-      shots: merged
-    };
+function normalizeInsightsValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(formatInsight).filter(Boolean);
+  }
+  if (value && typeof value === "object") {
+    return (Array.isArray(value.bullets) ? value.bullets : []).map(formatInsight).filter(Boolean);
+  }
+  return [];
+}
+
+function formatTranscriptTimestamp(startSeconds) {
+  const total = Math.max(0, Math.floor(Number(startSeconds) || 0));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
+    : `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
+}
+
+const TRANSCRIPT_BATCH_SECONDS = 120;
+
+function normalizeTranscript(value) {
+  const transcript = value && typeof value === "object" ? value : {};
+  const segments = Array.isArray(transcript.segments) ? transcript.segments : [];
+  const normalizedSegments = segments
+    .map((segment, i) => {
+      if (!segment || typeof segment !== "object") return null;
+      const text = String(segment.text || "").replace(/\s+/g, " ").trim();
+      const start = Number(segment.start || 0);
+      if (!text) return null;
+      return {
+        id: `tr-${i}`,
+        text,
+        start,
+        timestamp: formatTranscriptTimestamp(start),
+      };
+    })
+    .filter(Boolean);
+  const batchedSegments = [];
+  const buckets = new Map();
+  normalizedSegments.forEach((segment) => {
+    const bucketStart = Math.floor(segment.start / TRANSCRIPT_BATCH_SECONDS) * TRANSCRIPT_BATCH_SECONDS;
+    const bucketEnd = bucketStart + TRANSCRIPT_BATCH_SECONDS;
+    const key = String(bucketStart);
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        id: `tr-batch-${key}`,
+        start: bucketStart,
+        end: bucketEnd,
+        timestamp: `${formatTranscriptTimestamp(bucketStart)}-${formatTranscriptTimestamp(bucketEnd)}`,
+        parts: [],
+      });
+    }
+    buckets.get(key).parts.push(segment.text);
   });
-  const screenshots = uniqueShotsByUrl(
-    allScreens.filter((sh) => {
-      const u = absUrl(sh.url);
-      return u && !usedInSections.has(u);
-    }),
-    null
+  Array.from(buckets.values())
+    .sort((a, b) => a.start - b.start)
+    .forEach((bucket) => {
+      const text = bucket.parts.join(" ").replace(/\s+/g, " ").trim();
+      if (!text) return;
+      batchedSegments.push({
+        id: bucket.id,
+        start: bucket.start,
+        end: bucket.end,
+        timestamp: bucket.timestamp,
+        text,
+      });
+    });
+  const text = String(transcript.text || "").trim();
+  return {
+    text,
+    segments: batchedSegments,
+  };
+}
+
+function normalizeDeepDive(value) {
+  const deepDive = value && typeof value === "object" ? value : {};
+  const rawSections = Array.isArray(deepDive.sections) ? deepDive.sections : [];
+  const sections = rawSections
+    .map((section, i) => {
+      if (!section || typeof section !== "object") return null;
+      const heading = String(section.heading || section.title || "").trim();
+      const paragraphs = Array.isArray(section.paragraphs)
+        ? section.paragraphs.map((part) => String(part || "").trim()).filter(Boolean)
+        : [];
+      if (!heading || !paragraphs.length) return null;
+      return { id: `dd-${i}`, heading, paragraphs };
+    })
+    .filter(Boolean);
+  const text = String(deepDive.text || "").trim();
+  return { sections, text };
+}
+
+function toTextList(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item == null ? "" : item).trim())
+      .filter(Boolean);
+  }
+  if (typeof value === "string") {
+    const text = value.trim();
+    return text ? [text] : [];
+  }
+  return [];
+}
+
+function normalizeSection(sec, i) {
+  if (!sec || typeof sec !== "object") return null;
+  const title = String(sec.title || sec.heading || "").trim();
+  const time = String(sec.time || sec.t || sec.timestamp || "").trim();
+  const desc = String(sec.desc || sec.body || sec.description || "").trim();
+  if (!title && !time && !desc) return null;
+  return {
+    id: String(sec.id || "sec-" + i),
+    title,
+    time,
+    desc,
+    steps: toTextList(sec.steps),
+    subPoints: toTextList(sec.subPoints || sec.sub_points),
+    tradeOffs: toTextList(sec.tradeOffs || sec.trade_offs),
+    notable: String(sec.notable || sec.notable_detail || "").trim()
+  };
+}
+
+function normalizeSections(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(normalizeSection).filter(Boolean);
+}
+
+/** Map SSE/API payload to the React `result` shape. */
+function mapApiResultToView(rawData) {
+  const s = rawData?.summary || {};
+  const sections = normalizeSections(
+    s.key_sections || s.sections || rawData?.key_sections || rawData?.sections || []
   );
   return {
+    summary: s,
     metadata: {
-      title: rawData.metadata.title,
-      channel: rawData.metadata.channel,
-      duration: rawData.metadata.duration_formatted,
-      thumbnail: rawData.metadata.thumbnail_url ? absUrl(rawData.metadata.thumbnail_url) : ""
+      title: rawData?.metadata?.title,
+      channel: rawData?.metadata?.channel,
+      published: rawData?.metadata?.published,
+      views: rawData?.metadata?.views,
+      duration: rawData?.metadata?.duration_formatted,
+      thumbnail: rawData?.metadata?.thumbnail_url ? absUrl(rawData.metadata.thumbnail_url) : ""
     },
     pitch: s.video_overview ? s.video_overview.elevator_pitch : "No pitch available",
-    insights: s.key_insights || s.main_points || [],
-    mindmap: rawData.mindmap,
-    screenshots,
+    insights: normalizeInsightsValue(s.key_insights || s.main_points || []),
+    mindmap: rawData?.mindmap,
+    transcript: normalizeTranscript(rawData?.transcript),
     sections,
     concepts: (s.important_concepts || []).map((c) => ({
       name: c.concept,
       desc: c.explanation,
       sig: c.why_it_matters
     })),
+    deepDive: normalizeDeepDive(s.deep_dive),
+    videoType: s.video_type || rawData?.video_type || "",
     comparison: (s.comparison_table && s.comparison_table.applicable) ? {
       headers: s.comparison_table.headers,
       rows: s.comparison_table.rows
@@ -86,26 +199,16 @@ function normalizeDemoForView(d) {
   if (!d) return null;
   const m = d.metadata || {};
   const thumb = m.thumbnail_url || m.thumbnail;
-  const sections = Array.isArray(d.sections) ? d.sections.map((sec) => {
-    const shotRows = (sec.shots || []).map((sh) => ({
-      url: sh.src || sh.url,
-      caption: sh.caption || ""
-    }));
-    return { ...sec, shots: uniqueShotsByUrl(shotRows, null) };
-  }) : [];
-  const used = new Set();
-  sections.forEach((sec) => (sec.shots || []).forEach((sh) => { if (sh.src) used.add(sh.src); }));
-  const topScreens = Array.isArray(d.screenshots) ? d.screenshots : [];
-  const screenshots = uniqueShotsByUrl(
-    topScreens
-      .map((sh) => ({ url: sh.url || sh.src, caption: sh.caption || "" }))
-      .filter((sh) => {
-        const u = absUrl(sh.url);
-        return u && !used.has(u);
-      }),
-    null
-  );
+  const sections = normalizeSections(d.sections || d.key_sections || d.summary?.key_sections || []);
+  const rawSummary = d.summary || {};
+  const summary = {
+    ...rawSummary,
+    key_sections: Array.isArray(rawSummary.key_sections) && rawSummary.key_sections.length
+      ? rawSummary.key_sections
+      : (d.key_sections || d.sections || []),
+  };
   return {
+    summary,
     metadata: {
       title: m.title != null ? String(m.title) : "",
       channel: m.channel != null ? String(m.channel) : "",
@@ -114,15 +217,17 @@ function normalizeDemoForView(d) {
       views: m.views,
       thumbnail: thumb ? absUrl(thumb) : ""
     },
-    pitch: d.pitch != null ? String(d.pitch) : "",
-    insights: Array.isArray(d.insights) ? d.insights : [],
+    pitch: d.pitch != null ? String(d.pitch) : (summary.video_overview?.elevator_pitch || ""),
+    insights: normalizeInsightsValue(summary.key_insights || d.insights || []),
     mindmap: d.mindmap && typeof d.mindmap === "object" ? d.mindmap : { name: "Summary", children: [] },
+    transcript: normalizeTranscript(d.transcript),
     sections,
     concepts: Array.isArray(d.concepts) ? d.concepts : [],
+    deepDive: normalizeDeepDive(summary.deep_dive),
+    videoType: summary.video_type || "",
     comparison: d.comparison && typeof d.comparison === "object" ? d.comparison : null,
     recommendations: Array.isArray(d.recommendations) ? d.recommendations : [],
-    conclusion: d.conclusion != null ? d.conclusion : null,
-    screenshots
+    conclusion: d.conclusion != null ? d.conclusion : null
   };
 }
 
@@ -142,7 +247,6 @@ function App() {
   const demoOnlyMode = isPortfolioDemoMode();
 
   const [url, setUrl] = useState("https://www.videohost.example/watch?v=demo-modular-synth");
-  const [screenshotsOn, setScreenshotsOn] = useState(true);
   const [depthKnob, setDepthKnob] = useState(58);
 
   // pipeline state: idle | running | done | error
@@ -153,9 +257,21 @@ function App() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [exportFmt, setExportFmt] = useState("md");
+  const [mindmapReady, setMindmapReady] = useState(false);
+  const [activeTab, setActiveTab] = useState("insights");
 
   const timerRef = useRef(null);
   const cancelRef = useRef(false);
+  const resultsRef = useRef(null);
+  const hasPinnedResultsRef = useRef(false);
+
+  const pinResultsToTop = () => {
+    if (hasPinnedResultsRef.current) return;
+    hasPinnedResultsRef.current = true;
+    requestAnimationFrame(() => {
+      resultsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  };
 
   const run = async (demoPayload = null) => {
     clearInterval(timerRef.current);
@@ -163,8 +279,11 @@ function App() {
     setState("running");
     setError(null);
     setResult(null);
+    setMindmapReady(false);
+    setActiveTab("insights");
     setStepIdx(0);
     setPct(0);
+    hasPinnedResultsRef.current = false;
 
     if (demoPayload) {
       const stepLabels = [
@@ -190,7 +309,9 @@ function App() {
           const next = normalizeDemoForView(demoPayload);
           const apply = () => {
             setState("done");
+            setMindmapReady(true);
             setResult(next);
+            pinResultsToTop();
           };
           /* One commit: setInterval is outside React; avoid done+result splitting across renders (R17 / edge cases). */
           if (typeof ReactDOM.flushSync === "function") {
@@ -218,7 +339,7 @@ function App() {
         const response = await fetch('/api/summarize', {
             method: 'POST',
             headers: headers,
-            body: JSON.stringify({ url, include_screenshots: screenshotsOn })
+            body: JSON.stringify({ url })
         });
 
         if (!response.ok) throw new Error("Synthesis service temporarily unavailable.");
@@ -247,13 +368,26 @@ function App() {
                             setPct(percent);
                             const si = Math.min(4, Math.floor(percent / 20));
                             setStepIdx(si);
+                        } else if (data.type === 'partial_result') {
+                            const stage = String(data.stage || "");
+                            if (stage === "summary") {
+                                setLabel("Summary is streaming in...");
+                                setPct((prev) => Math.max(prev, 80));
+                                setStepIdx(3);
+                            } else if (stage === "mindmap") {
+                                setLabel("Rendering mindmap...");
+                                setPct((prev) => Math.max(prev, 92));
+                                setStepIdx(4);
+                            }
                         } else if (data.type === 'result') {
                             setPct(100);
                             setStepIdx(4);
                             setLabel("Done!");
                             
                             const res = mapApiResultToView(data.data);
+                            setMindmapReady(true);
                             setResult(res);
+                            pinResultsToTop();
                             setState("done");
                         } else if (data.type === 'error') {
                             throw new Error(data.message);
@@ -304,22 +438,17 @@ function App() {
     }
   }, []); // on mount
 
-  const safeExportBase = () => {
-    const t = result?.metadata?.title || "youtube_buddy_summary";
-    return String(t).replace(/[^\w\-\s]+/g, "").replace(/\s+/g, "_").slice(0, 72) || "summary";
+  const handleScopedExportDownload = (scope, fmt) => {
+    if (!result || !window.downloadSummarySection) return;
+    setExportFmt(fmt);
+    window.downloadSummarySection(result, scope, fmt);
   };
 
-  const handleExportDownload = (fmt) => {
-    if (!result || !window.buildMarkdown) return;
-    setExportFmt(fmt);
-    const base = safeExportBase();
-    if (fmt === "md") {
-      const md = window.buildMarkdown(result);
-      window.downloadBlob(`${base}.md`, new Blob([md], { type: "text/markdown;charset=utf-8" }));
-    } else if (fmt === "docx") {
-      window.downloadWord(result);
-    } else if (fmt === "pdf") {
-      window.openPrintablePdf(result);
+  const handleTranscriptCopy = async () => {
+    if (!result || !window.copyTranscriptText) return;
+    const copied = await window.copyTranscriptText(result);
+    if (!copied) {
+      alert("Could not copy transcript.");
     }
   };
 
@@ -351,11 +480,11 @@ function App() {
         {/* NAV */}
         <div className="nav">
           <div className="brand">
-            <span className="logo-mark">yb</span>
+            <span className="logo-mark">yd</span>
             <div>
               <div>
                 <span className="brand-title">YOUTUBE
-bUDDY
+DISTILLER
 </span>
                 <span className="brand-version">v1.2</span>
               </div>
@@ -384,17 +513,12 @@ bUDDY
           </div>
         </div>
 
-        {/* HERO — row 1: URL + SHOTS; row 2: centered DISTILL */}
+        {/* HERO — row 1: URL; row 2: centered DISTILL */}
         <div className="hero">
           <div className="hero-row-1">
             <SearchField value={url} onChange={setUrl}
               onSubmit={onDistill}
               placeholder="Paste any video URL…" />
-            <Switch
-              on={screenshotsOn}
-              onChange={setScreenshotsOn}
-              label="SHOTS"
-              sublabel="frame capture" />
           </div>
           <div className="hero-row-2">
             <DistillButton
@@ -416,7 +540,7 @@ bUDDY
         {/* DEMO LINE */}
         <div className="demo-line">
           <Led on />
-          <span>Use the sample payload to preview extraction, screenshots, mindmaps, and summary formatting.</span>
+          <span>Use the sample payload to preview summary extraction, mindmaps, and export formatting.</span>
           <button className="demo-btn" onClick={onDemo}>▸ RUN DEMO</button>
         </div>
 
@@ -429,23 +553,23 @@ bUDDY
         }
 
         {/* RESULTS */}
-        {state === "done" && result &&
-        <div className="results">
+        {result &&
+        <div className="results" ref={resultsRef}>
             <VideoProfile meta={result.metadata} pitch={result.pitch} />
-            <ScreenshotsGallery shots={result.screenshots} />
-            <div className="results-split">
-              <InsightsPanel
-              insights={result.insights}
+            <SummaryWorkspace
+              data={result}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
               format={exportFmt}
               onFormat={setExportFmt}
-              onDownload={handleExportDownload} />
-            
-              <MindmapPanel data={result.mindmap} onPng={handleMindmapPng} />
-            </div>
+              onSectionDownload={handleScopedExportDownload}
+              onTranscriptCopy={handleTranscriptCopy}
+              onMindmapPng={handleMindmapPng}
+              mindmapLoading={!mindmapReady}
+            />
             <div className="mono" style={{ fontSize: 10, color: "var(--muted)", letterSpacing: ".1em", padding: "0 4px" }}>
               ▸ EXPORT PREVIEW ({exportFmt.toUpperCase()}): {exportSnippet}
             </div>
-            <DetailSections data={result} />
           </div>
         }
 

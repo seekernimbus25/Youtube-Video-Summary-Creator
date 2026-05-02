@@ -53,19 +53,6 @@ const Knob = ({ value = 0, onChange, min = 0, max = 100, label }) => {
   );
 };
 
-const Switch = ({ on, onChange, label, sublabel }) => (
-  <div className="switch-block">
-    <div
-      className={`switch${on ? " on" : ""}`}
-      onClick={() => onChange(!on)}
-      role="switch"
-      aria-checked={on}
-    />
-    {label && <div className="btn-label" style={{ marginTop: 6 }}>{label}</div>}
-    {sublabel && <div className="btn-sublabel">{sublabel}</div>}
-  </div>
-);
-
 const DistillButton = ({ onClick, disabled, busy, label = "DISTILL" }) => (
   <div className="distill-well">
     <Led on={!disabled && !busy} />
@@ -143,6 +130,6 @@ const ErrorCard = ({ message, onDismiss }) => (
 );
 
 Object.assign(window, {
-  Screws, Led, Knob, Switch, DistillButton, SearchField,
+  Screws, Led, Knob, DistillButton, SearchField,
   ProgressCard, ErrorCard,
 });
