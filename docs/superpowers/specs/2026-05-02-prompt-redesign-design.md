@@ -25,7 +25,7 @@ Each of the four summary views currently pulls from the same section backbone wi
 
 ## 1. Key Sections — Trim for 60+ min videos only
 
-**Scope:** Only videos with duration ≥ 60 minutes. Videos under 60 minutes are unchanged.
+**Scope:** Only videos with duration >= 60 minutes. Videos under 60 minutes are unchanged.
 
 ### Changes to `_section_description_budget`
 
@@ -59,7 +59,7 @@ For 60+ minute videos, change the description length rule from:
 to:
 > "at least 30% and at most 55% of that section's source_words count"
 
-Pass the duration into the polish prompt and conditionally apply the tighter cap.
+Pass the duration into the polish prompt and conditionally apply the tighter cap. Note: the 55% is a ceiling, not a target — sections with short source windows should still be written to their natural length and not padded to hit 55%.
 
 ---
 
@@ -82,14 +82,16 @@ Replace the current framing ("write a strong standalone deep dive with proper he
 ### Minimum word count changes (in `_deep_dive_min_word_count`)
 
 ```
-≤ 5 min:   350  (unchanged)
-≤ 20 min:  450  (unchanged)
-≤ 45 min:  650  (unchanged)
-≤ 60 min:  800  (unchanged for this range — previously the 45-90 min range was one tier at 800)
-≤ 90 min:  1200 (NEW — 60-90 min videos previously got 800, now get 1200)
-≤ 3 hours: 1800 (up from 1200)
-> 3 hours: 2200 (up from 1500)
+<= 5 min:   350  (unchanged)
+<= 20 min:  450  (unchanged)
+<= 45 min:  650  (unchanged)
+<= 60 min:  800  (unchanged for this range — previously the 45-90 min range was one tier at 800)
+<= 90 min:  1200 (NEW — 60-90 min videos previously got 800, now get 1200)
+<= 3 hours: 1800 (up from 1200)
+> 3 hours:  2200 (up from 1500)
 ```
+
+Token budget: `_synthesize_summary_from_sections` uses `max_out_tokens=12000` (~9000 words). No change needed — 2200 words plus all other summary fields fits comfortably within this budget.
 
 ---
 
@@ -117,15 +119,15 @@ Replace "high-signal bullet that synthesizes a major takeaway" with:
 
 ### Count and length
 
-- **5-8 bullets** (unchanged)
+- **No fixed bullet count** — write as many good bullets as the content genuinely supports. Quality over count. Do not pad with weak bullets to hit a minimum.
 - **30-60 words per bullet** (tightened from current 35-80 / 25-60 word budgets)
 
 ### Backfill logic (`_backfill_summary_depth`)
 
-The current fallback for fewer than 6 insights produces mechanical text like:
+The current fallback for fewer than the expected number of insights produces mechanical text like:
 > "X. This matters because it is a central point in Y. Evidence: Z."
 
-Replace this fallback with archetype-driven generation: pull `notable_detail` from sections and cast it as an archetype bullet in the `[finding] — [why it matters]` format. Cap backfilled bullets at 2 — if real insights are genuinely sparse, 4 good bullets beat 8 mechanical ones.
+Replace this fallback with archetype-driven generation: pull `notable_detail` from sections and cast it as an archetype bullet in the `[finding] — [why it matters]` format. Prefer archetype diversity across the 5 types rather than clustering around whichever sections happen to have `notable_detail`. Cap backfilled bullets at 2 — if real insights are genuinely sparse, fewer good bullets are better than many mechanical ones.
 
 ---
 
@@ -133,12 +135,12 @@ Replace this fallback with archetype-driven generation: pull `notable_detail` fr
 
 ### Structure scales with video length
 
-The required depth and node count depend on video duration.
+The required depth and node guidance depend on video duration. All counts below are **quality targets, not hard requirements** — the model should aim for these ranges but must not pad the tree with weak nodes to hit a number.
 
 #### Short videos (< 20 min)
-- **3-6 branches**, content-driven — no hard minimum
-- **2 levels** sufficient (branch → leaf); sub-branches optional
-- No hard node count — "as many as the content naturally supports"
+- **3-6 branches**, content-driven
+- **2 levels** sufficient (branch -> leaf); sub-branches optional
+- No node count target — as many as the content naturally supports
 - Only hard rules: branches must map to real content, leaves must be complete sentences, no vague labels ("Key Points", "Main Ideas", "Overview")
 
 #### Medium videos (20-60 min)
@@ -148,9 +150,9 @@ The required depth and node count depend on video duration.
 
 #### Long videos (60+ min)
 - **7-10 branches**
-- **3 levels required**: root → branch → sub-branch → leaf
+- **3 levels required**: root -> branch -> sub-branch -> leaf
 - **Target 45-80 nodes**
-- Branches must span the full video timeline — if all branches come from the first third of the video, that is a failure
+- Branches must cover the video's major content span — if all branches come from the first third of the video's ideas, that is a failure. The goal is concept coverage, not chronological balance.
 
 ### Node structure (all video lengths)
 
@@ -169,12 +171,16 @@ Branches with fewer than 3 meaningful sub-topics may skip the sub-branch level a
 - Remove leaf character cap entirely — leaves must be complete sentences
 - Replace "5-9 major branches" rule with the scaled table above (pass duration into the function)
 - Add: "Explicitly ban branch names: 'Key Points', 'Main Ideas', 'Overview', 'Introduction', 'Conclusion' unless the transcript itself uses those as chapter names"
-- Add the full-video coverage rule for 60+ min videos
-- Add target node count per tier
+- Add the content-span coverage rule for 60+ min videos
+- Add target node count per tier with explicit note that these are quality targets
 
 ### Reduce prompt
 
-Same structural scaling applies to the `_reduce_user_prompt` mind map rules section (currently just "4-7 main branches, leaves are substantive sentences").
+Same structural scaling applies to the `_reduce_user_prompt` mind map rules section (currently just "4-7 main branches, leaves are substantive sentences"). Note: the reduce stage mindmap output is **intermediate** — it feeds into the final merge. The authoritative final mindmap is produced by `_mindmap_from_sections_user_prompt`, not the reduce step.
+
+### Token budget
+
+`_synthesize_mindmap_from_sections` currently uses `max_out_tokens=8000`. For long videos with 45-80 full-sentence leaves this may be tight. Bump to **10000** in the implementation.
 
 ---
 
@@ -190,10 +196,11 @@ Same structural scaling applies to the `_reduce_user_prompt` mind map rules sect
 4. `_polish_key_sections` — thread `duration` through to the prompt builder (caller of #3)
 5. `_insight_word_budget` — tighten to 30-60 words across the board
 6. `_deep_dive_min_word_count` — new tiers for 90 min, 3 hours, 3+ hours
-7. `_summary_from_sections_user_prompt` — new Deep Dive framing + Insights archetypes
+7. `_summary_from_sections_user_prompt` — new Deep Dive framing + Insights archetypes + remove fixed count
 8. `_backfill_summary_depth` — fix mechanical insights fallback
 9. `_mindmap_from_sections_user_prompt` — add `duration` parameter, scaled structure, char limit changes
 10. `_reduce_user_prompt` — update mind map rules section
+11. `_synthesize_mindmap_from_sections` — bump `max_out_tokens` from 8000 to 10000
 
 ### Not changed
 - Key Sections prompts for videos < 60 min
