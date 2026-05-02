@@ -1831,7 +1831,7 @@ Rules:
 - The deep dive headings should be type-aware for this video type ({video_type}) and should function like a self-contained AI summary, not a loose extension of key_sections.
 - important_concepts: 6-10 items for long videos, with substantial explanations and an example_from_video where possible.
 - practical_recommendations: synthesize recommendation_seeds from across chunks into actionable recommendations.
-- mindmap: 4-7 main branches, leaves are substantive sentences.
+- mindmap: use 7-10 branches for this long video, 3 levels (root -> branch -> sub-branch -> leaf), target 45-80 nodes (quality target — do not pad). Branches must cover the video's major content span, not just the first third of ideas. Sub-branches group related leaves. Leaves are complete sentences with specific facts, claims, or examples. Banned branch names: "Key Points", "Main Ideas", "Overview", "Introduction", "Conclusion".
 - Return valid JSON only, no ``` fences.
 """
 
@@ -2017,7 +2017,27 @@ def _mindmap_from_sections_user_prompt(
     duration: str,
     sections: List[Dict[str, Any]],
 ) -> str:
+    duration_seconds = _parse_duration_to_seconds(duration)
     sections_json = json.dumps(sections, ensure_ascii=False, indent=2)
+
+    if duration_seconds < 20 * 60:
+        structure_rules = """- Use 3-6 branches, content-driven — only include branches with real content.
+- 2 levels is sufficient (branch -> leaf); sub-branches are optional.
+- No node count target — as many nodes as the content naturally supports.
+- Hard rules: branches must map to real content; leaves must be complete sentences; no vague branch labels (see banned names below)."""
+    elif duration_seconds < 60 * 60:
+        structure_rules = """- Use 5-8 branches.
+- 2-3 levels (sub-branches encouraged but not required).
+- Target 25-50 nodes total (quality target, not a hard requirement — do not pad with weak nodes).
+- Leaves must be complete sentences with one specific fact, claim, step, or example."""
+    else:
+        structure_rules = """- Use 7-10 branches.
+- Use 3 levels: root -> branch -> sub-branch -> leaf.
+- Target 45-80 nodes total (quality target — do not pad with weak nodes to hit the number).
+- Branches must cover the video's major content span. If all branches represent ideas from only the first third of the video's content, that is a failure — cover the full range.
+- Leaves must be complete sentences with one specific fact, claim, step, or example.
+- Branches with fewer than 3 meaningful sub-topics may skip sub-branches and go directly to 3-5 leaf children."""
+
     return f"""
 You are building a mind map tree from a video's extracted sections.
 
@@ -2033,19 +2053,26 @@ Respond with valid JSON only:
 {{
   "mindmap": {{
     "id": "root",
-    "label": "Central thesis, max 40 chars",
+    "label": "Central thesis of the video, max 60 chars",
     "category": "root",
     "children": [
       {{
         "id": "branch-1",
-        "label": "Major theme or section, max 55 chars",
+        "label": "Major topic area, max 65 chars",
         "category": "concept",
         "children": [
           {{
             "id": "branch-1-1",
-            "label": "Full sentence leaf with a concrete fact, claim, step, metric, or example",
-            "category": "data",
-            "children": []
+            "label": "Sub-topic within branch, max 65 chars",
+            "category": "concept",
+            "children": [
+              {{
+                "id": "branch-1-1-1",
+                "label": "Complete sentence with one specific fact, claim, step, or example",
+                "category": "data",
+                "children": []
+              }}
+            ]
           }}
         ]
       }}
@@ -2053,12 +2080,14 @@ Respond with valid JSON only:
   }}
 }}
 
-Rules:
-- Use 5-9 major branches when the source supports them.
-- Branches must map directly to the real section backbone, not generic categories.
-- Leaves must be concrete, standalone sentences, not topic labels.
-- Prefer one fact per leaf.
-- Include process steps where relevant by making them leaves under the relevant branch.
+Structure rules:
+{structure_rules}
+
+Rules for all videos:
+- Branches must map directly to real content in the section backbone, not generic categories.
+- Banned branch names (do not use these unless the transcript itself uses them as chapter names): "Key Points", "Main Ideas", "Overview", "Introduction", "Conclusion".
+- Leaves must be complete sentences. Do not use topic labels as leaves.
+- Prefer one fact, claim, step, or example per leaf.
 - Avoid duplicate branches and duplicate leaves.
 """.strip()
 
@@ -2214,7 +2243,7 @@ async def _synthesize_mindmap_from_sections(
     payload = await _run_json_llm(
         system_prompt=SYSTEM_PROMPT,
         user_prompt=_mindmap_from_sections_user_prompt(title, channel, duration, sections),
-        max_out_tokens=8000,
+        max_out_tokens=10000,
         user_api_key=user_api_key,
         user_provider=user_provider,
         user_model=user_model,

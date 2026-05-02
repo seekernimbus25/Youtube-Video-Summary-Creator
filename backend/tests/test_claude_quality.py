@@ -14,6 +14,7 @@ from services.claude_service import (
     _insight_word_budget,
     _key_sections_polish_prompt,
     _map_chunk_user_prompt,
+    _mindmap_from_sections_user_prompt,
     _recommendation_word_budget,
     _reduce_user_prompt,
     _section_description_budget,
@@ -466,3 +467,54 @@ def test_backfill_does_not_produce_mechanical_evidence_text():
         assert "This matters because it is a central point in" not in bullet
         assert "Evidence:" not in bullet
         assert " — " in bullet
+
+
+def test_mindmap_prompt_short_video_is_free_flowing():
+    prompt = _mindmap_from_sections_user_prompt(
+        title="T", channel="C", duration="10:00",
+        sections=[],
+    )
+    assert "3-6 branches" in prompt
+    assert "7-10 branches" not in prompt
+    assert "45-80 nodes" not in prompt
+
+
+def test_mindmap_prompt_medium_video_uses_mid_tier():
+    prompt = _mindmap_from_sections_user_prompt(
+        title="T", channel="C", duration="35:00",
+        sections=[],
+    )
+    assert "5-8 branches" in prompt
+    assert "25-50 nodes" in prompt
+
+
+def test_mindmap_prompt_long_video_uses_deep_tier():
+    prompt = _mindmap_from_sections_user_prompt(
+        title="T", channel="C", duration="1:05:00",
+        sections=[],
+    )
+    assert "7-10 branches" in prompt
+    assert "45-80 nodes" in prompt
+    assert "3 levels" in prompt
+    assert "major content span" in prompt
+
+
+def test_mindmap_prompt_removes_old_char_caps():
+    prompt = _mindmap_from_sections_user_prompt(
+        title="T", channel="C", duration="35:00",
+        sections=[],
+    )
+    assert "max 40 chars" not in prompt
+    assert "max 55 chars" not in prompt
+    assert "max 60 chars" in prompt
+    assert "max 65 chars" in prompt
+
+
+def test_mindmap_prompt_bans_generic_branch_names():
+    for duration in ["10:00", "35:00", "1:05:00"]:
+        prompt = _mindmap_from_sections_user_prompt(
+            title="T", channel="C", duration=duration,
+            sections=[],
+        )
+        assert "Key Points" in prompt  # listed as a banned name
+        assert "Main Ideas" in prompt
