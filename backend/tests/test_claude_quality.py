@@ -12,6 +12,7 @@ from services.claude_service import (
     _get_chunk_map_system,
     _deep_dive_min_word_count,
     _insight_word_budget,
+    _key_sections_polish_prompt,
     _map_chunk_user_prompt,
     _recommendation_word_budget,
     _reduce_user_prompt,
@@ -385,3 +386,29 @@ def test_section_subpoint_budget_long_video():
 def test_insight_word_budget_is_uniform():
     assert _insight_word_budget("10:00") == "30-60 words"
     assert _insight_word_budget("1:02:00") == "30-60 words"
+
+
+def test_polish_prompt_uses_tighter_cap_for_long_videos():
+    prompt = _key_sections_polish_prompt(
+        title="T", channel="C", duration="1:05:00",
+        sections=[{"title": "A", "timestamp": "0:00", "timestamp_seconds": 0,
+                   "description": "d", "steps": [], "sub_points": [],
+                   "trade_offs": [], "notable_detail": ""}],
+        section_materials=[{"timestamp_seconds": 0, "source_words": 300,
+                             "transcript_excerpt": ""}],
+    )
+    assert "at most 55%" in prompt
+    assert "at most 65%" not in prompt
+
+
+def test_polish_prompt_uses_standard_cap_for_short_videos():
+    prompt = _key_sections_polish_prompt(
+        title="T", channel="C", duration="50:00",
+        sections=[{"title": "A", "timestamp": "0:00", "timestamp_seconds": 0,
+                   "description": "d", "steps": [], "sub_points": [],
+                   "trade_offs": [], "notable_detail": ""}],
+        section_materials=[{"timestamp_seconds": 0, "source_words": 300,
+                             "transcript_excerpt": ""}],
+    )
+    assert "at most 65%" in prompt
+    assert "at most 55%" not in prompt

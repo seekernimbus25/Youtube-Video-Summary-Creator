@@ -1134,6 +1134,12 @@ def _key_sections_polish_prompt(
     sections: List[Dict[str, Any]],
     section_materials: List[Dict[str, Any]],
 ) -> str:
+    duration_seconds = _parse_duration_to_seconds(duration)
+    cap_rule = (
+        "at least 30% and at most 55% of that section's source_words count. Aim for roughly 40%-50%"
+        if duration_seconds >= 60 * 60
+        else "at least 30% and at most 65% of that section's source_words count. Aim for roughly 45%-55%"
+    )
     materials_by_ts = {int(item.get("timestamp_seconds", 0)): item for item in section_materials}
     payload = []
     for section in sections:
@@ -1177,7 +1183,7 @@ Rules:
 - Keep the same number of sections.
 - Preserve each section's title, timestamp, and timestamp_seconds exactly.
 - description must be a summary, not a transcript copy.
-- For each section, description length should be at least 30% and at most 65% of that section's source_words count. Aim for roughly 45%-55%.
+- For each section, description length should be {cap_rule}. The cap is a ceiling, not a target — do not pad a short section to reach it.
 - Do not quote or copy long contiguous spans from the transcript excerpt.
 - Do not mention timestamps inside description, steps, sub_points, trade_offs, or notable_detail.
 - Remove repetition across fields.
