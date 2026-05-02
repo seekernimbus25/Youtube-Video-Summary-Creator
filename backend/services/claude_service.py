@@ -1933,13 +1933,13 @@ Respond with valid JSON only:
   }},
   "key_insights": {{
     "bullets": [
-      "A high-signal bullet that synthesizes a major takeaway from the whole video"
+      "The finding — why it matters or what to do about it"
     ]
   }},
   "deep_dive": {{
     "sections": [
       {{
-        "heading": "Type-aware heading",
+        "heading": "Thematic heading derived from content",
         "paragraphs": [
           "Dense paragraph grounded in the section backbone",
           "Dense paragraph grounded in the section backbone"
@@ -1968,21 +1968,26 @@ Respond with valid JSON only:
 
 Rules:
 - Do not rewrite or merge the sections. Treat them as fixed source material.
-- key_insights.bullets: return 4-8 bullets.
-- Each bullet should summarize a major takeaway from the whole video, not one narrow local moment.
-- Do not use the old [claim] + [why/mechanism] + [timestamp evidence] formula.
-- Each bullet should be roughly {_insight_word_budget(duration)} and must stay under 220 words.
-- Bullets should feel like a strong overall summary a user can scan before opening Key Sections.
-- deep_dive.sections: write a strong standalone deep dive with proper headings, not a shallow recap.
-- Use 4-6 sections with headings.
-- Infer the best 4-6 headings directly from the section backbone. Do not force a tutorial/lecture/opinion outline unless the sections themselves clearly support it.
-- Group related sections under headings that reflect the actual content themes, not the video type label.
-- Each heading should represent a major component that emerges from the section backbone and should synthesize the grouped sections rather than repeating them verbatim.
-- If the wording of a heading can be improved, rewrite it, but keep the theme and grouping logic intact.
-- Each section should contain 1-2 dense paragraphs.
-- The total deep dive should be at least {_deep_dive_min_word_count(duration)} words for this video, and longer videos should naturally produce more text.
-- Taken together, the deep dive should read like a complete AI summary with explicit subheadings and should synthesize the video's logic, examples, trade-offs, and practical significance.
-- It should be useful even if the user reads only the deep dive and never opens the other tabs.
+- key_insights.bullets: write as many bullets as the content genuinely supports — no fixed count. Quality over quantity. Do not pad with weak bullets to hit a number.
+- Each bullet must belong to one of these archetypes:
+  1. Surprising stat or fact — something the viewer would not expect
+  2. Counterintuitive claim — goes against common assumption
+  3. Practical implication — what this means for what you should do
+  4. Recurring theme — a pattern that surfaces in multiple parts of the video
+  5. Memorable quote or moment — something specific the speaker said or demonstrated
+- Format each bullet as: [The finding] — [why it matters or what to do about it]
+- Each bullet should be roughly {_insight_word_budget(duration)} and must stay under 100 words.
+- Do not restate a Key Section title as a bullet.
+- Do not write generic observations like "the speaker discusses X" or "the video explains Y".
+- Do not include timestamp references in bullets.
+- Do not use passive constructions ("it is noted that...").
+- deep_dive.sections: you are writing a self-contained essay about this video. The reader will see ONLY this section — no Key Sections, no timestamps, nothing else. Write it the way you would if asked to summarize this video comprehensively. Cover: what the video argues, how it argues it, the key evidence and examples, what is surprising or counterintuitive, and the practical significance.
+- Use 5-7 headed sections.
+- Each section must contain 2-3 dense paragraphs.
+- Headings must be thematic lenses derived from the content, not topic labels. Good: "Why the Common Approach Fails". Bad: "Section 3" or "Main Discussion".
+- At least one heading must synthesize across multiple parts of the video rather than covering one part in isolation.
+- Infer headings from the actual section backbone — do not force a tutorial/lecture/opinion template.
+- The total deep dive should be at least {_deep_dive_min_word_count(duration)} words.
 - important_concepts: 6-10 items for long videos and each should pull from different parts of the section backbone where possible.
 - Each important_concepts.explanation should be roughly {_concept_explanation_budget(duration)} and should not exceed 220 words.
 - practical_recommendations: 4-8 items, each grounded in something specific from the sections.

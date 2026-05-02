@@ -241,20 +241,34 @@ def test_summary_from_sections_prompt_includes_length_constraints():
         title="T",
         channel="C",
         duration="1:02:00",
-        sections=[{"title": "A", "timestamp": "0:00", "timestamp_seconds": 0, "description": "x", "steps": [], "sub_points": [], "trade_offs": [], "notable_detail": ""}],
+        sections=[{"title": "A", "timestamp": "0:00", "timestamp_seconds": 0,
+                   "description": "x", "steps": [], "sub_points": [],
+                   "trade_offs": [], "notable_detail": ""}],
         video_type="general",
     )
+    # budget values still in prompt
     assert _insight_word_budget("1:02:00") in prompt
     assert _concept_explanation_budget("1:02:00") in prompt
     assert _recommendation_word_budget("1:02:00") in prompt
-    assert "key_insights.bullets: return 4-8 bullets." in prompt
+    assert str(_deep_dive_min_word_count("1:02:00")) in prompt
+    # JSON shape
     assert '"deep_dive": {' in prompt
     assert '"sections": [' in prompt
-    assert "Use 4-6 sections with headings." in prompt
-    assert "Infer the best 4-6 headings directly from the section backbone." in prompt
-    assert "Do not force a tutorial/lecture/opinion outline" in prompt
-    assert "Group related sections under headings that reflect the actual content themes" in prompt
-    assert str(_deep_dive_min_word_count("1:02:00")) in prompt
+    # new deep dive framing
+    assert "self-contained essay" in prompt
+    assert "The reader will see ONLY this section" in prompt
+    assert "Use 5-7 headed sections" in prompt
+    assert "2-3 dense paragraphs" in prompt
+    assert "thematic lenses" in prompt
+    assert "do not force a tutorial/lecture/opinion template" in prompt
+    # new insights framing
+    assert "Surprising stat or fact" in prompt
+    assert "Counterintuitive claim" in prompt
+    assert "Practical implication" in prompt
+    assert "Recurring theme" in prompt
+    assert "Memorable quote or moment" in prompt
+    assert "[The finding]" in prompt
+    assert "Quality over quantity" in prompt
 
 
 def test_deep_dive_min_word_count_scales_with_duration():
