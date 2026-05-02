@@ -344,7 +344,7 @@ def test_backfill_summary_depth_normalizes_structured_insight_objects():
     result = _backfill_summary_depth(payload, duration="1:02:00")
     insight = result["summary"]["key_insights"]["bullets"][0]
     assert "AI product sense is becoming a dedicated interview gate." in insight
-    assert "Evidence: 06:04." in insight
+    assert "Evidence: 06:04." in insight  # _normalize_insight appends this for LLM-returned structured dicts
 
 
 def test_extract_key_sections_payload_supports_nested_summary_shape():
