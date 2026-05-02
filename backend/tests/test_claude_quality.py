@@ -231,7 +231,8 @@ def test_section_description_budget_scales_with_duration():
     assert _section_description_budget("4:00") == "60-90 words"
     assert _section_description_budget("12:00") == "80-120 words"
     assert _section_description_budget("30:00") == "110-150 words"
-    assert _section_description_budget("1:02:00") == "150-200 words"
+    assert _section_description_budget("50:00") == "150-200 words"   # 50 min: unchanged
+    assert _section_description_budget("1:02:00") == "120-165 words"  # 62 min: new tier
 
 
 def test_summary_from_sections_prompt_includes_length_constraints():
@@ -259,9 +260,10 @@ def test_deep_dive_min_word_count_scales_with_duration():
     assert _deep_dive_min_word_count("5:00") == 350
     assert _deep_dive_min_word_count("12:00") == 450
     assert _deep_dive_min_word_count("25:00") == 650
-    assert _deep_dive_min_word_count("1:10:00") == 800
-    assert _deep_dive_min_word_count("2:00:00") == 1200
-    assert _deep_dive_min_word_count("4:00:00") == 1500
+    assert _deep_dive_min_word_count("55:00") == 800     # 55 min: <=60 min tier
+    assert _deep_dive_min_word_count("1:10:00") == 1200  # 70 min: was 800
+    assert _deep_dive_min_word_count("2:00:00") == 1800  # 2 hr: was 1200
+    assert _deep_dive_min_word_count("4:00:00") == 2200  # 4 hr: was 1500
 
 
 def test_single_pass_accepts_new_params():
@@ -373,3 +375,13 @@ def test_extract_key_sections_payload_supports_sections_alias():
 def test_generate_summary_and_mindmap_accepts_new_params():
     params = inspect.signature(generate_summary_and_mindmap).parameters
     assert "video_type" in params
+
+
+def test_section_subpoint_budget_long_video():
+    assert _section_subpoint_budget("50:00") == "4-7"   # 45-60 min: unchanged
+    assert _section_subpoint_budget("1:02:00") == "3-5"  # 60+ min: new tier
+
+
+def test_insight_word_budget_is_uniform():
+    assert _insight_word_budget("10:00") == "30-60 words"
+    assert _insight_word_budget("1:02:00") == "30-60 words"

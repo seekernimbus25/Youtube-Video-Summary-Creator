@@ -678,6 +678,8 @@ def _log_section_timestamps(label: str, sections: List[Dict[str, Any]]) -> None:
 
 def _section_description_budget(duration: str) -> str:
     duration_seconds = _parse_duration_to_seconds(duration)
+    if duration_seconds >= 60 * 60:
+        return "120-165 words"
     if duration_seconds >= 45 * 60:
         return "150-200 words"
     if duration_seconds >= 20 * 60:
@@ -689,12 +691,13 @@ def _section_description_budget(duration: str) -> str:
 
 def _section_subpoint_budget(duration: str) -> str:
     duration_seconds = _parse_duration_to_seconds(duration)
+    if duration_seconds >= 60 * 60:
+        return "3-5"
     return "4-7" if duration_seconds >= 45 * 60 else "3-5"
 
 
 def _insight_word_budget(duration: str) -> str:
-    duration_seconds = _parse_duration_to_seconds(duration)
-    return "35-80 words" if duration_seconds >= 45 * 60 else "25-60 words"
+    return "30-60 words"
 
 
 def _concept_explanation_budget(duration: str) -> str:
@@ -720,11 +723,13 @@ def _deep_dive_min_word_count(duration: str) -> int:
         return 450
     if duration_seconds <= 45 * 60:
         return 650
-    if duration_seconds <= int(1.5 * 60 * 60):
+    if duration_seconds <= 60 * 60:
         return 800
-    if duration_seconds <= 3 * 60 * 60:
+    if duration_seconds <= int(1.5 * 60 * 60):
         return 1200
-    return 1500
+    if duration_seconds <= 3 * 60 * 60:
+        return 1800
+    return 2200
 
 
 def _count_words(text: str) -> int:
