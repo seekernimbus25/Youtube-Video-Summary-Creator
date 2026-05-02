@@ -1797,7 +1797,7 @@ The JSON structure MUST match the following (same as single-pass full analysis):
         "notable_detail": "one concrete memorable fact or empty string"
       }}
     ],
-    "key_insights": {{ "bullets": [ ... 4-8 items ... ] }},
+    "key_insights": {{ "bullets": [ ... quality bullets, no fixed count ... ] }},
     "deep_dive": {{ "sections": [{{"heading": "Heading", "paragraphs": ["Paragraph"]}}] }},
     "important_concepts": [ ... ],
     "comparison_table": {{ "applicable": true/false, "headers": [], "rows": [] }},
@@ -1824,11 +1824,12 @@ Rules:
 - Sections MUST cover the entire runtime from start to finish. Missing the middle or back half is a failure.
 - Every section MUST include a non-empty "title" field plus timestamp, timestamp_seconds, description, steps, sub_points, trade_offs, notable_detail.
 - sub_points: merge from concept_seeds and subsection candidates; no empty filler.
-- key_insights.bullets: return 4-8 high-signal bullets that summarize major takeaways from the whole video.
+- key_insights.bullets: write as many bullets as the content genuinely supports — no fixed count. Quality over quantity. Do not pad with weak bullets.
+- Each bullet must use the format: [The finding] — [why it matters or what to do about it]
 - Do not use the old specific-claim-plus-timestamp pattern item by item.
-- deep_dive.sections: make it a real standalone analysis with explicit headings, not a padded recap.
-- deep_dive.sections should contain 4-6 headed sections with 1-2 dense paragraphs each.
-- The deep dive headings should be type-aware for this video type ({video_type}) and should function like a self-contained AI summary, not a loose extension of key_sections.
+- deep_dive.sections: write a self-contained essay. The reader will see ONLY this section. Use 5-7 headed sections with 2-3 dense paragraphs each.
+- Headings must be thematic lenses derived from the content, not topic labels. At least one heading must synthesize across multiple parts of the video.
+- Do not force a tutorial/lecture/opinion template.
 - important_concepts: 6-10 items for long videos, with substantial explanations and an example_from_video where possible.
 - practical_recommendations: synthesize recommendation_seeds from across chunks into actionable recommendations.
 - mindmap: use 7-10 branches for this long video, 3 levels (root -> branch -> sub-branch -> leaf), target 45-80 nodes (quality target — do not pad). Branches must cover the video's major content span, not just the first third of ideas. Sub-branches group related leaves. Leaves are complete sentences with specific facts, claims, or examples. Banned branch names: "Key Points", "Main Ideas", "Overview", "Introduction", "Conclusion".
@@ -2005,7 +2006,7 @@ Rules:
 - practical_recommendations: 4-8 items, each grounded in something specific from the sections.
 - Each practical recommendation should be roughly {_recommendation_word_budget(duration)} and should not exceed 80 words.
 - conclusion should be roughly {_conclusion_word_budget(duration)} and should not exceed 260 words.
-- video_overview.elevator_pitch should be 70-140 words for long videos and should not exceed 180 words.
+- video_overview.elevator_pitch should be 70-140 words and should not exceed 180 words.
 - comparison_table: only set applicable=true if the sections actually support a real comparison.
 - Never use placeholder filler. Everything must trace back to the supplied sections.
 """.strip()
