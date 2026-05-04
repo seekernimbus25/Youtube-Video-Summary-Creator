@@ -16,7 +16,7 @@ This spec introduces a RAG pipeline and AI Chat feature to the YT Video Summaris
 - Indexing runs as an **in-process async task** (not a durable background queue); if the FastAPI process restarts mid-index, the job is lost — lock expires within 300s of the last heartbeat and the client can retry. This is acceptable for v1; a durable queue is a future extension.
 - `/api/index` returns JSON 200/202 immediately; client polls `/api/index/status` every 5s for progress
 - Indexing lock is heartbeated every 60s to survive long videos without expiring mid-job
-- **Readiness source of truth is the Qdrant manifest** — both `/api/index` and `/api/chat` treat a valid manifest as authoritative. Redis job state is a convenience cache for polling; it does not gate chat access.
+- **Readiness source of truth is the Qdrant manifest** — `/api/chat` gates on manifest validity only; Redis job state is never consulted for chat access. A stale or missing Redis job state cannot open or close the chat gate.
 - Tool calling is provider-agnostic (Anthropic + OpenRouter both supported); `/api/chat` reads same `x-buddy-*` headers as `/api/summarize`
 - Chat is a general assistant with video context; non-video answers are clearly labeled
 - AI Chat is only available after a successful `/api/summarize`
@@ -61,6 +61,10 @@ Transport: `/api/index` returns plain JSON (200 or 202) immediately. No SSE. Cli
 ```
 Client opens AI Chat tab
   → POST /api/index { video_id }
+  → Server checks Redis availability (ping):
+      Redis unavailable → return 503 { error: "service_unavailable",
+          message: "Indexing service temporarily unavailable. Please try again." }
+      (no async task started; client shows error with retry button)
   → Server checks Qdrant manifest for video_id:
       valid manifest exists → set Redis job state = "ready" (refresh cache)
                             → return 200 { status: "ready" }, done
@@ -103,7 +107,7 @@ User sends message
   → POST /api/chat { video_id, messages: [{role, content}] }
       headers: x-buddy-api-key, x-buddy-provider, x-buddy-model (same as /api/summarize)
   → check Qdrant manifest: valid manifest exists → proceed
-  → if no valid manifest: check Redis job state; if not "ready" → 409 { error: "not_indexed" }
+  → if no valid manifest: 409 { error: "not_indexed" }  — Redis state is not consulted
   → resolve provider/client/model from headers (same logic as /api/summarize)
   → chat_service.chat(video_id, messages, provider, client, model) → SSE stream
 
@@ -264,7 +268,8 @@ POST /api/index
   Auth:    same as /api/summarize
   Returns: 200 { status: "ready" }    — valid manifest exists, skip polling
          | 202 { status: "indexing" }  — job running or just started, begin polling
-  Note: transcript_not_found surfaces as job state "failed" via polling, not as HTTP 409
+         | 503 { error: "service_unavailable" } — Redis is down; client shows error + retry
+  Note: transcript_not_found surfaces as job state "failed" via polling, not as HTTP 4xx
 
 GET /api/index/status?video_id=...
   Returns: IndexStatusResponse
@@ -273,7 +278,7 @@ POST /api/chat
   Body:    ChatRequest
   Headers: x-buddy-api-key, x-buddy-provider, x-buddy-model (same as /api/summarize)
   Auth:    same as /api/summarize
-  Returns: 409 { error: "not_indexed" }     — if no valid Qdrant manifest AND job state is not "ready"
+  Returns: 409 { error: "not_indexed" }     — if no valid Qdrant manifest (Redis state not consulted)
          | SSE stream of ChatSSEEvent
 ```
 
@@ -370,7 +375,7 @@ On first open: fires `POST /api/index { video_id }`. If response is `{ status: "
 
 | Scenario | Handling |
 |---|---|
-| Chat requested before indexing complete | Check manifest: not valid → check job state: not "ready" → 409 `{ error: "not_indexed" }` |
+| Chat requested before indexing complete | Check manifest: not valid → 409 `{ error: "not_indexed" }` (Redis not consulted) |
 | Agent hits 3-iteration limit | Force stop; return partial answer + note |
 | Voyage query embed fails | Emit `error` SSE event; show "Search failed, please retry" |
 | Search returns empty results | Claude receives empty chunks, responds naturally; labels general knowledge |
@@ -441,7 +446,7 @@ On first open: fires `POST /api/index { video_id }`. If response is `{ status: "
 - [ ] Two browser tabs open AI Chat simultaneously: only one indexing job runs
 - [ ] 2hr+ video: indexing completes across all batches, job state reaches `ready`
 - [ ] Voyage API key missing: indexing fails with error state, retry button works
-- [ ] Redis unavailable: summarize still completes; AI Chat tab shows failed state after polling (job state cannot be written)
+- [ ] Redis unavailable: summarize still completes; `POST /api/index` returns 503 with retry button; Qdrant-indexed videos still allow chat (manifest check bypasses Redis)
 
 ---
 
