@@ -319,7 +319,7 @@ New tab appended: **Insights | Key Sections | Deep Dive | Mind Map | Transcript 
 | Failed | Job state is `failed` | Error message + "Retry" button (re-fires `POST /api/index`) |
 | Ready | Job state is `ready` | Chat interface |
 
-On first open: fires `POST /api/index { video_id }`. If response is `{ status: "ready" }` (200), shows chat immediately. If 202, begins polling. If 409, shows error with message from server.
+On first open: fires `POST /api/index { video_id }`. If response is `{ status: "ready" }` (200), shows chat immediately. If 202, begins polling. If 503, shows error with retry button.
 
 ### Chat interface
 
