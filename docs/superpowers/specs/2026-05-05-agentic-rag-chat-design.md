@@ -13,8 +13,10 @@ This spec introduces a RAG pipeline and AI Chat feature to the YT Video Summaris
 **Key architectural decisions:**
 - Transcript is persisted to Redis at summarization time; indexing reads from there
 - If Redis misses and no valid Qdrant index exists, indexing returns 409 — no silent re-fetch fallback that could produce a different transcript than the one used for summarization
-- Indexing is a background job; `/api/index` returns JSON 200/202 immediately; client polls `/api/index/status` every 5s for progress
+- Indexing runs as an **in-process async task** (not a durable background queue); if the FastAPI process restarts mid-index, the job is lost — lock expires within 300s of the last heartbeat and the client can retry. This is acceptable for v1; a durable queue is a future extension.
+- `/api/index` returns JSON 200/202 immediately; client polls `/api/index/status` every 5s for progress
 - Indexing lock is heartbeated every 60s to survive long videos without expiring mid-job
+- **Readiness source of truth is the Qdrant manifest** — both `/api/index` and `/api/chat` treat a valid manifest as authoritative. Redis job state is a convenience cache for polling; it does not gate chat access.
 - Tool calling is provider-agnostic (Anthropic + OpenRouter both supported); `/api/chat` reads same `x-buddy-*` headers as `/api/summarize`
 - Chat is a general assistant with video context; non-video answers are clearly labeled
 - AI Chat is only available after a successful `/api/summarize`
@@ -50,22 +52,25 @@ This spec introduces a RAG pipeline and AI Chat feature to the YT Video Summaris
 
 If Redis is unavailable, the persist step is skipped with a warning — summarization continues normally. Indexing will fail with 409 if Redis misses and no valid Qdrant index exists (see Phase 1).
 
-### Phase 1 — Indexing (background, triggered on first AI Chat open)
+### Phase 1 — Indexing (in-process async task, triggered on first AI Chat open)
 
 Transport: `/api/index` returns plain JSON (200 or 202) immediately. No SSE. Client polls `/api/index/status` for progress.
+
+**Durability note:** Indexing runs as an `asyncio` task inside the FastAPI process — not a durable queue. If the server restarts mid-index, the task is lost. The lock expires within 300s of the last heartbeat, after which the next `POST /api/index` starts a clean retry. Partial Qdrant writes are detected via manifest chunk_count mismatch and re-indexed from scratch.
 
 ```
 Client opens AI Chat tab
   → POST /api/index { video_id }
   → Server checks Qdrant manifest for video_id:
-      valid manifest exists → return 200 { status: "ready" }, done
+      valid manifest exists → set Redis job state = "ready" (refresh cache)
+                            → return 200 { status: "ready" }, done
   → Server checks Redis job state:
       "indexing" → return 202 { status: "indexing" }, client begins polling
       absent/failed → acquire_lock(video_id, ttl=300)
-          lock acquired → set job state = "indexing", return 202, begin background work
+          lock acquired → set job state = "indexing", return 202, begin async task
           lock not acquired → return 202 { status: "indexing" }, client begins polling
 
-Background indexing work:
+In-process async indexing task:
   → heartbeat loop: every 60s, extend lock TTL to 300s (runs until job completes/fails)
   → read transcript from Redis (transcript:{video_id})
   → if Redis miss: return 409 { error: "transcript_not_found",
@@ -95,7 +100,8 @@ Client polls `GET /api/index/status?video_id=...` every **5 seconds** while job 
 User sends message
   → POST /api/chat { video_id, messages: [{role, content}] }
       headers: x-buddy-api-key, x-buddy-provider, x-buddy-model (same as /api/summarize)
-  → check job state: if not "ready" → 409 { error: "not_indexed" }
+  → check Qdrant manifest: valid manifest exists → proceed
+  → if no valid manifest: check Redis job state; if not "ready" → 409 { error: "not_indexed" }
   → resolve provider/client/model from headers (same logic as /api/summarize)
   → chat_service.chat(video_id, messages, provider, client, model) → SSE stream
 
@@ -105,13 +111,20 @@ Agent loop (max 3 iterations, provider-agnostic via ToolCallingAdapter):
       for each call: rag_service.search(video_id, query, n=5)
         → embed query via Voyage (~80ms)
         → Qdrant hybrid search: dense + BM25, RRF fusion (~50ms)
-        → return top-5 chunks with [MM:SS] timestamps
+        → return top-5 chunks; each chunk carries exact start_time (e.g. 134s)
+          formatted as [MM:SS] for model context (e.g. [02:14])
       append normalized tool results, loop
   → if end_turn: stream final answer tokens to client
 
+Timestamp semantics: chunks carry exact start_time from transcript segments. The model
+sees and cites exact [MM:SS] values — this precision helps it distinguish between parts
+of the video. The frontend renders all citations as ~MM:SS chips that navigate to the
+containing 2-minute bucket; the approximation is a rendering concern, not a model concern.
+
 System prompt (chat):
   You are a helpful assistant for this YouTube video.
-  When your answer comes from the video transcript, cite the timestamp like [02:14].
+  When your answer comes from the video transcript, cite the section timestamp like [02:14].
+  These timestamps are shown to users as approximate navigation points in the video.
   When your answer comes from your general knowledge and not the video, start your
   response with "[General knowledge]" so the user knows it is not from this video.
 ```
