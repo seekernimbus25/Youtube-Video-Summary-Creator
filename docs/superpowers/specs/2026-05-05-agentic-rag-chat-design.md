@@ -12,7 +12,7 @@ This spec introduces a RAG pipeline and AI Chat feature to the YT Video Summaris
 
 **Key architectural decisions:**
 - Transcript is persisted to Redis at summarization time; indexing reads from there
-- If Redis misses and no valid Qdrant index exists, indexing returns 409 — no silent re-fetch fallback that could produce a different transcript than the one used for summarization
+- If Redis misses and no valid Qdrant index exists, the async indexing task sets job state to `failed` with a clear error message — no silent re-fetch fallback that could produce a different transcript than the one used for summarization
 - Indexing runs as an **in-process async task** (not a durable background queue); if the FastAPI process restarts mid-index, the job is lost — lock expires within 300s of the last heartbeat and the client can retry. This is acceptable for v1; a durable queue is a future extension.
 - `/api/index` returns JSON 200/202 immediately; client polls `/api/index/status` every 5s for progress
 - Indexing lock is heartbeated every 60s to survive long videos without expiring mid-job
@@ -50,7 +50,7 @@ This spec introduces a RAG pipeline and AI Chat feature to the YT Video Summaris
   → continue summarization as before (unchanged)
 ```
 
-If Redis is unavailable, the persist step is skipped with a warning — summarization continues normally. Indexing will fail with 409 if Redis misses and no valid Qdrant index exists (see Phase 1).
+If Redis is unavailable, the persist step is skipped with a warning — summarization continues normally. If Redis misses when indexing reads transcript and no valid Qdrant index exists, the async task sets job state to `failed`; the client surfaces this on the next poll (see Phase 1).
 
 ### Phase 1 — Indexing (in-process async task, triggered on first AI Chat open)
 
@@ -73,8 +73,10 @@ Client opens AI Chat tab
 In-process async indexing task:
   → heartbeat loop: every 60s, extend lock TTL to 300s (runs until job completes/fails)
   → read transcript from Redis (transcript:{video_id})
-  → if Redis miss: return 409 { error: "transcript_not_found",
-      message: "Please re-summarize the video to enable AI Chat." }
+  → if Redis miss: set job state = failed, error = "transcript_not_found",
+      message = "Please re-summarize the video to enable AI Chat."
+      release_lock(video_id), exit task
+      (client sees "failed" on next poll and surfaces the message)
   → check Qdrant manifest:
       stale or absent → delete existing points for video_id, proceed
   → chunk transcript: 512-token chunks, 64-token overlap, sentence boundaries
@@ -260,10 +262,9 @@ Tool result message formatting (handled by adapter, not caller):
 POST /api/index
   Body:    IndexRequest
   Auth:    same as /api/summarize
-  Returns: 200 { status: "ready" }          — already indexed, skip polling
-         | 202 { status: "indexing" }        — job running or just started, begin polling
-         | 409 { error: "transcript_not_found",
-                 message: "Please re-summarize the video to enable AI Chat." }
+  Returns: 200 { status: "ready" }    — valid manifest exists, skip polling
+         | 202 { status: "indexing" }  — job running or just started, begin polling
+  Note: transcript_not_found surfaces as job state "failed" via polling, not as HTTP 409
 
 GET /api/index/status?video_id=...
   Returns: IndexStatusResponse
@@ -272,7 +273,7 @@ POST /api/chat
   Body:    ChatRequest
   Headers: x-buddy-api-key, x-buddy-provider, x-buddy-model (same as /api/summarize)
   Auth:    same as /api/summarize
-  Returns: 409 { error: "not_indexed" }     — if job state is not "ready"
+  Returns: 409 { error: "not_indexed" }     — if no valid Qdrant manifest AND job state is not "ready"
          | SSE stream of ChatSSEEvent
 ```
 
@@ -355,8 +356,8 @@ On first open: fires `POST /api/index { video_id }`. If response is `{ status: "
 | Scenario | Handling |
 |---|---|
 | Redis unavailable at persist time | Log warning, skip persist; summarization continues normally |
-| Redis miss when indexing reads transcript | Return 409 "Please re-summarize the video to enable AI Chat." — no silent re-fetch |
-| Transcript TTL expired (>24h since summarize) | Same as Redis miss → 409 |
+| Redis miss when indexing reads transcript | Set job state to `failed`, error = "transcript_not_found", message = "Please re-summarize the video to enable AI Chat."; release lock; client sees failure on next poll |
+| Transcript TTL expired (>24h since summarize) | Same as Redis miss — job state set to `failed` |
 | Valid Qdrant index already exists | Skip all work; return 200 `ready` immediately |
 | Two users trigger indexing simultaneously | Second `acquire_lock` returns False → return 202 `indexing`; client polls |
 | Long video (lock would expire mid-job) | `heartbeat_lock` called every 60s extends lock to 300s; crash stops heartbeat → lock expires within 300s, retry allowed |
@@ -369,7 +370,7 @@ On first open: fires `POST /api/index { video_id }`. If response is `{ status: "
 
 | Scenario | Handling |
 |---|---|
-| Chat requested before indexing complete | 409 `{ error: "not_indexed" }` |
+| Chat requested before indexing complete | Check manifest: not valid → check job state: not "ready" → 409 `{ error: "not_indexed" }` |
 | Agent hits 3-iteration limit | Force stop; return partial answer + note |
 | Voyage query embed fails | Emit `error` SSE event; show "Search failed, please retry" |
 | Search returns empty results | Claude receives empty chunks, responds naturally; labels general knowledge |
@@ -422,7 +423,7 @@ On first open: fires `POST /api/index { video_id }`. If response is `{ status: "
 
 - `POST /api/index` for a known 5-minute transcript → `GET /api/index/status` eventually returns `ready`; manifest written to Qdrant
 - Concurrent `POST /api/index` for same video_id → only one job runs (lock test)
-- `POST /api/index` after Redis TTL expiry (no Qdrant index) → 409
+- `POST /api/index` after Redis TTL expiry (no Qdrant index) → 202; polling shows `failed` with transcript_not_found message
 - `POST /api/index` after Redis TTL expiry (valid Qdrant index exists) → 200 `ready`
 - `POST /api/chat` with a factual question → `~MM:SS` citation chips appear in response
 - `POST /api/chat` with an off-topic question → response contains `[General knowledge]` prefix
@@ -440,7 +441,7 @@ On first open: fires `POST /api/index { video_id }`. If response is `{ status: "
 - [ ] Two browser tabs open AI Chat simultaneously: only one indexing job runs
 - [ ] 2hr+ video: indexing completes across all batches, job state reaches `ready`
 - [ ] Voyage API key missing: indexing fails with error state, retry button works
-- [ ] Redis unavailable: summarize still completes; AI Chat shows 409 on first open
+- [ ] Redis unavailable: summarize still completes; AI Chat tab shows failed state after polling (job state cannot be written)
 
 ---
 
