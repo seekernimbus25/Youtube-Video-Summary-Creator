@@ -1,103 +1,262 @@
 # Agentic RAG Pipeline + AI Chat — Design Spec
 
-**Date:** 2026-05-05
+**Date:** 2026-05-05 (revised post-review)
 **Status:** Approved
-**Scope:** RAG infrastructure (on-demand indexing) + AI Chat feature (Approach 2: Agentic RAG)
+**Scope:** RAG infrastructure (on-demand background indexing) + AI Chat feature (Approach 2: Agentic RAG, provider-agnostic)
 
 ---
 
 ## 1. Overview
 
-This spec introduces a RAG pipeline and AI Chat feature to the YT Video Summariser. The vector DB becomes the foundation for chat now, and for quiz and flashcards later. The existing summarization pipeline (key insights, sections, deep dive, mindmap) is **not changed**.
+This spec introduces a RAG pipeline and AI Chat feature to the YT Video Summariser. The vector DB becomes the foundation for chat now, and for quiz and flashcards later. The existing summarization pipeline (key insights, sections, deep dive, mindmap) is **not behaviorally changed**, but it is extended to persist transcript data for downstream use.
 
-**Trigger:** Embedding is on-demand — initiated when the user first opens the AI Chat tab. Embeddings are cached per `video_id` in Qdrant indefinitely, so subsequent opens (by any user) skip re-indexing.
+**Key architectural decisions:**
+- Transcript is persisted to Redis at summarization time; indexing reads from there
+- Indexing is a background job with SSE progress + Redis state; client can disconnect and poll
+- Tool calling is provider-agnostic (Anthropic + OpenRouter both supported)
+- Chat is a general assistant with video context; non-video answers are clearly labeled
+- AI Chat is only available after a successful `/api/summarize`
 
 **External services added:**
+
 | Service | Purpose | Free Tier |
 |---|---|---|
 | Qdrant Cloud | Vector store (dense + sparse) | 1GB, no expiry |
-| Voyage AI (`voyage-3-lite`) | Embedding model | 50M tokens/month |
+| Voyage AI (`voyage-3-lite`) | Dense embedding model | 50M tokens/month |
 | fastembed | Sparse BM25 vectors | Open source, local |
+| Upstash Redis | Transcript cache + indexing job state | 10K commands/day, 256MB |
 
 ---
 
 ## 2. Architecture & Data Flow
 
-### Phase 1 — Indexing (once per video)
+### Phase 0 — Transcript Persistence (change to existing pipeline)
+
+`/api/summarize` is extended to persist transcript data to Redis after fetching it, before summarization begins. This is additive — no summarization logic changes.
 
 ```
-Existing transcript (already in memory from summarization)
-  → Chunker: 512-token chunks, 64-token overlap, sentence boundaries
-     metadata per chunk: { video_id, chunk_index, start_time, end_time, text }
-  → Voyage AI batch embed (voyage-3-lite)
-  → fastembed sparse BM25 encode
-  → Qdrant upsert: dense + sparse vectors with payload
-  → video_id marked as indexed (detectable via point count)
+/api/summarize (existing)
+  → fetch transcript + segments (existing)
+  → NEW: persist to Redis
+      key: transcript:{video_id}
+      value: { transcript_text, segments, fetched_at }
+      TTL: 24 hours
+  → continue summarization as before (unchanged)
 ```
+
+If Redis is unavailable, the persist step is skipped with a warning — summarization continues normally. Indexing will re-fetch transcript from YouTube in that case (see error handling).
+
+### Phase 1 — Indexing (background, triggered on first AI Chat open)
+
+```
+Client opens AI Chat tab
+  → POST /api/index { video_id }
+  → Server checks Redis job state for video_id:
+      "ready"    → return 200 { status: "already_indexed" }, done
+      "indexing" → return 202 { status: "in_progress" }, client polls
+      absent     → set job state = "indexing", return 202, begin work
+
+Background indexing work (SSE progress stream):
+  → read transcript from Redis (transcript:{video_id})
+  → if Redis miss: re-fetch from YouTube via transcript_service (fallback)
+  → check index manifest in Qdrant for video_id:
+      if manifest exists and is valid (hash + version match): skip, set state = "ready"
+      if manifest stale or absent: delete existing points for video_id, re-index
+  → chunk transcript: 512-token chunks, 64-token overlap, sentence boundaries
+      metadata per chunk: { video_id, chunk_index, start_time, end_time, text }
+      special case: transcript < 200 tokens → single chunk
+  → batch embed via Voyage AI (voyage-3-lite), 20 chunks per batch
+  → batch BM25 encode via fastembed, same batches
+  → upsert to Qdrant with dense + sparse vectors + payload
+  → write index manifest to Qdrant (special point, payload only):
+      { video_id, transcript_hash, chunking_version: "v1", dense_model: "voyage-3-lite",
+        sparse_model: "bm25", chunk_count: N, indexed_at }
+  → set Redis job state = "ready"
+  → emit SSE: { type: "done", chunk_count: N }
+```
+
+Client polls `GET /api/index/status?video_id=...` every 2 seconds while job state is `"indexing"`. Response includes `{ status, progress_pct }`.
 
 ### Phase 2 — Agentic Chat (every message)
 
 ```
-User message
-  → Claude receives: conversation history + search_transcript(query, n=5) tool
-  → Agent loop (max 3 iterations):
-      Claude calls search_transcript(query)
-        → Voyage embeds query (~80ms)
+User sends message
+  → POST /api/chat { video_id, messages: [{role, content}] }
+  → check job state: if not "ready" → 409 { error: "not_indexed" }
+  → chat_service.chat(video_id, messages, provider) → SSE stream
+
+Agent loop (max 3 iterations, provider-agnostic via ToolCallingAdapter):
+  → ToolCallingAdapter.complete(messages, tools=[search_transcript])
+  → if tool calls returned:
+      for each call: rag_service.search(video_id, query, n=5)
+        → embed query via Voyage (~80ms)
         → Qdrant hybrid search: dense + BM25, RRF fusion (~50ms)
-        → return top-5 chunks with timestamps
-      Claude reads chunks, decides to search again or answer
-  → Claude streams final answer with [MM:SS] timestamp citations
-  → Frontend emits "Searching transcript..." during tool calls, then streams tokens
+        → return top-5 chunks with [MM:SS] timestamps
+      append tool results, loop
+  → if end_turn: stream final answer tokens to client
+
+System prompt (chat):
+  You are a helpful assistant for this YouTube video.
+  When your answer comes from the video transcript, cite the timestamp like [02:14].
+  When your answer comes from your general knowledge and not the video, start your
+  response with "[General knowledge]" so the user knows it is not from this video.
 ```
 
-### What stays unchanged
+### What changes in the existing pipeline
 
-The summarization pipeline (transcript fetch → map-reduce → key sections/insights/deep dive/mindmap/SSE streaming) is completely untouched. The vector DB is additive.
+`/api/summarize` is extended in one place: after transcript fetch, before summarization, persist to Redis. No summarization logic, prompts, chunking, or SSE output changes.
 
 ---
 
-## 3. Backend — New Services & Endpoints
+## 3. Data Models
+
+New Pydantic models in `backend/models.py`:
+
+```python
+class IndexRequest(BaseModel):
+    video_id: str
+
+class IndexStatusResponse(BaseModel):
+    status: Literal["already_indexed", "in_progress", "queued", "failed", "not_found"]
+    progress_pct: Optional[int] = None  # 0-100 during indexing
+    error: Optional[str] = None
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+class ChatRequest(BaseModel):
+    video_id: str
+    messages: list[ChatMessage]
+
+# SSE envelope (consistent with /api/summarize)
+class ChatSSEEvent(BaseModel):
+    type: Literal["status", "token", "error", "done"]
+    text: Optional[str] = None
+
+class IndexSSEEvent(BaseModel):
+    type: Literal["progress", "done", "error"]
+    progress_pct: Optional[int] = None
+    chunk_count: Optional[int] = None
+    text: Optional[str] = None
+```
+
+---
+
+## 4. Backend — New Services & Endpoints
+
+### `backend/services/transcript_cache_service.py`
+
+| Function | Description |
+|---|---|
+| `persist(video_id, transcript_text, segments, ttl=86400)` | Writes to Redis; key: `transcript:{video_id}`; fire-and-forget, errors logged not raised |
+| `get(video_id)` | Returns `{ transcript_text, segments }` or `None` on miss/error |
 
 ### `backend/services/rag_service.py`
 
 | Function | Description |
 |---|---|
-| `chunk_transcript(transcript_text, segments)` | Splits into 512-token chunks at sentence boundaries; attaches `start_time`/`end_time` from segment data; handles very short transcripts (<200 tokens) as single chunk |
-| `index_video(video_id, chunks)` | Batch-embeds via Voyage AI + fastembed BM25, upserts into Qdrant; idempotent |
-| `is_indexed(video_id)` | Checks Qdrant point count for video_id filter; returns bool |
-| `search(video_id, query, n=5)` | Embeds query, runs hybrid search, returns ranked chunks with timestamps |
+| `chunk_transcript(transcript_text, segments)` | 512-token chunks, 64-token overlap, sentence boundaries; attaches `start_time`/`end_time`; single-chunk fallback for short transcripts |
+| `get_manifest(video_id)` | Reads index manifest point from Qdrant; returns dict or `None` |
+| `is_index_valid(video_id, transcript_text)` | Compares manifest hash + chunking_version + dense_model against current values |
+| `index_video(video_id, chunks)` | Batch embed (Voyage, 20/batch) + BM25 encode (fastembed) + Qdrant upsert; writes manifest on completion; yields `(progress_pct, chunk_count)` |
+| `search(video_id, query, n=5)` | Embed query → Qdrant hybrid search → return ranked chunks with timestamps |
+
+### `backend/services/job_state_service.py`
+
+| Function | Description |
+|---|---|
+| `get(video_id)` | Returns job state dict or `None`; key: `index_job:{video_id}` |
+| `set(video_id, status, progress_pct=None, error=None)` | Upserts job state in Redis; TTL: 48h |
+| `acquire_lock(video_id, ttl=300)` | SET NX with TTL; returns bool — used to prevent duplicate concurrent indexing |
+| `release_lock(video_id)` | DEL lock key |
+
+Lock key: `index_lock:{video_id}`, TTL 300s (5 min). If `acquire_lock` returns False, the endpoint returns 202 with status `"in_progress"` immediately without starting a second job.
+
+### `backend/services/tool_calling_adapter.py`
+
+Normalizes tool calling across Anthropic and OpenRouter (OpenAI-shaped) APIs.
+
+```python
+class ToolCallingAdapter:
+    def __init__(self, provider: str, client, model: str): ...
+
+    async def complete(
+        self,
+        messages: list[dict],
+        tools: list[ToolDefinition],
+        max_tokens: int,
+    ) -> AdapterResponse:
+        # Returns: { content: str | None, tool_calls: list[ToolCall] | None, stop_reason: str }
+        # Normalizes:
+        #   Anthropic: stop_reason="tool_use", content[i].type=="tool_use"
+        #   OpenAI:    finish_reason="tool_calls", message.tool_calls[i]
+```
+
+```python
+@dataclass
+class ToolDefinition:
+    name: str
+    description: str
+    parameters: dict  # JSON Schema
+
+@dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict  # parsed, not raw string
+
+@dataclass
+class AdapterResponse:
+    text: str | None          # final text if stop_reason is end_turn/stop
+    tool_calls: list[ToolCall] | None
+    stop_reason: str          # "end_turn" | "tool_calls" | "max_tokens"
+```
+
+The adapter handles message formatting for tool results:
+- Anthropic: `{ role: "user", content: [{ type: "tool_result", tool_use_id, content }] }`
+- OpenAI: `{ role: "tool", tool_call_id, content }`
 
 ### `backend/services/chat_service.py`
 
 | Function | Description |
 |---|---|
-| `chat(video_id, messages)` | Async generator; drives agentic loop; streams SSE events |
+| `chat(video_id, messages, provider, client, model)` | Async generator; drives agentic loop via `ToolCallingAdapter`; streams `ChatSSEEvent` dicts; max 3 tool-call iterations |
 
-**Agentic loop logic:**
-1. Build `search_transcript` tool definition for Claude
-2. Send conversation history + tool to Claude (streaming)
-3. On `tool_use` stop reason: execute searches, append results, loop (max 3 iterations)
-4. On `end_turn`: stream final answer tokens to client
-5. If max iterations reached without `end_turn`: force close loop, return partial answer with note
-
-**SSE event types emitted:**
-```json
-{ "type": "status", "text": "Searching transcript..." }
-{ "type": "token",  "text": "Based on [02:14]..." }
-{ "type": "error",  "text": "Search failed, please retry" }
-{ "type": "done" }
-```
+**Agent loop:**
+1. Build `search_transcript` tool definition
+2. Call `adapter.complete(messages, tools, max_tokens=4096)`
+3. If `tool_calls`: execute each via `rag_service.search`, append normalized tool results, emit `status` event, loop
+4. If `end_turn`: stream `token` events for response text, emit `done`
+5. If max iterations reached: emit remaining text + note, emit `done`
 
 ### New endpoints in `main.py`
 
 ```
 POST /api/index
-  Body:    { video_id: str, transcript: str, segments: [...] }
-  Returns: SSE stream → { status: "indexing" | "ready" | "already_indexed" }
+  Body:    IndexRequest
+  Auth:    same as /api/summarize
+  Returns: 200 { status: "already_indexed" }
+         | 202 { status: "in_progress" | "queued" } + SSE progress stream
+
+GET /api/index/status?video_id=...
+  Returns: IndexStatusResponse
 
 POST /api/chat
-  Body:    { video_id: str, messages: [{role, content}] }
-  Returns: SSE stream → status events + token stream
+  Body:    ChatRequest
+  Auth:    same as /api/summarize
+  Returns: 409 if not indexed
+         | SSE stream of ChatSSEEvent
+```
+
+### New environment variables
+
+```
+VOYAGE_API_KEY=
+QDRANT_URL=
+QDRANT_API_KEY=
+UPSTASH_REDIS_URL=
+UPSTASH_REDIS_TOKEN=
 ```
 
 ### New dependencies (`requirements.txt`)
@@ -106,31 +265,28 @@ POST /api/chat
 qdrant-client
 voyageai
 fastembed
-```
-
-### New environment variables (`.env`)
-
-```
-VOYAGE_API_KEY=
-QDRANT_URL=
-QDRANT_API_KEY=
+upstash-redis
 ```
 
 ---
 
-## 4. Frontend — AI Chat Tab
+## 5. Frontend — AI Chat Tab
 
-### New tab
+### Tab placement
 
-Added to the existing tab bar: **Insights | Key Sections | Deep Dive | Mind Map | AI Chat**
+Existing tabs: **Insights | Key Sections | Deep Dive | Mind Map | Transcript**
+New tab appended: **Insights | Key Sections | Deep Dive | Mind Map | Transcript | AI Chat**
 
 ### Tab states
 
 | State | Condition | UI |
 |---|---|---|
-| Blocked | Summarization not yet complete | "Finish summarizing the video first." |
-| Indexing | First open, `POST /api/index` in progress | "Indexing video..." progress indicator |
-| Ready | `is_indexed` true | Chat interface |
+| Blocked | No summary result yet | "Summarize a video first to use AI Chat." |
+| Queued / Indexing | Job state is `queued` or `in_progress` | "Indexing video..." + progress bar (polls `/api/index/status` every 2s) |
+| Failed | Job state is `failed` | Error message + "Retry" button |
+| Ready | Job state is `ready` | Chat interface |
+
+On first open: fires `POST /api/index { video_id }` immediately. If response is `already_indexed`, shows chat. Otherwise, begins polling.
 
 ### Chat interface
 
@@ -139,13 +295,15 @@ Added to the existing tab bar: **Insights | Key Sections | Deep Dive | Mind Map 
 │  AI Chat                            │
 ├─────────────────────────────────────┤
 │                                     │
-│  [assistant] Welcome! Ask me        │
-│  anything about this video.         │
+│  [assistant] Ask me anything about  │
+│  this video. I'll tell you when an  │
+│  answer comes from general          │
+│  knowledge rather than the video.   │
 │                                     │
 │  [user] What did he say about X?    │
 │                                     │
 │  [assistant] 🔍 Searching...        │
-│  Based on [02:14] and [07:43]...    │
+│  Based on [02:00] and [07:40]...    │
 │                                     │
 ├─────────────────────────────────────┤
 │  [ Ask anything about this video ] →│
@@ -154,79 +312,105 @@ Added to the existing tab bar: **Insights | Key Sections | Deep Dive | Mind Map 
 
 ### UX details
 
-- "Searching transcript..." appears **inline in the message bubble** during tool-call iterations — not a spinner overlay
-- `[MM:SS]` timestamp citations rendered as clickable chips — clicking scrolls the transcript view to that timestamp
-- Conversation history lives in React state only (lost on page refresh — no server-side persistence in v1)
+- "Searching transcript..." appears inline in the message bubble during tool-call iterations
+- `[MM:SS]` timestamp citations rendered as clickable chips — clicking scrolls the transcript view to the **containing 2-minute bucket** (limitation of current batched transcript UI; exact per-timestamp anchors are out of scope for this spec)
+- `[General knowledge]` prefix rendered with a distinct visual style (e.g. muted italic) so users can distinguish video-grounded vs. general answers
+- Conversation history in React state only (lost on page refresh — no server-side persistence in v1)
 - Input disabled while response is streaming; re-enabled on `done` event
-- No new frontend dependencies — React + vanilla CSS only
+- No new frontend dependencies
 
 ---
 
-## 5. Error Handling & Edge Cases
+## 6. Error Handling & Edge Cases
 
 ### Indexing
 
 | Scenario | Handling |
 |---|---|
-| Voyage API down / rate-limited | Show "Indexing failed" + retry button; partial index detected by point count mismatch and re-triggered |
-| Qdrant connection failure | Same retry surface; log server-side |
-| Very short transcript (<200 tokens) | Skip chunking, embed as single chunk; chat still works |
+| Redis unavailable at persist time | Log warning, skip persist; summarization continues normally |
+| Redis miss when indexing reads transcript | Re-fetch from YouTube via `transcript_service`; log warning |
+| Transcript TTL expired (>24h since summarize) | Same as Redis miss — re-fetch from YouTube |
+| Two users trigger indexing simultaneously | `acquire_lock` returns False for second request → return 202 `in_progress` immediately; no duplicate job |
+| Voyage API rate-limited during indexing | Retry with exponential backoff (2s, 4s, 8s) per batch; if exhausted, set job state `failed`, emit `error` SSE event |
+| Qdrant upsert fails mid-batch | Job state set to `failed`; partial index detected on next trigger via manifest chunk_count mismatch → re-index from scratch |
+| Very short transcript (<200 tokens) | Skip chunking, embed as single chunk; chat works normally |
+| Stale index (chunking_version or model changed) | `is_index_valid` returns False → delete old points, re-index |
 
 ### Chat
 
 | Scenario | Handling |
 |---|---|
-| Agent hits 3-iteration limit | Force `end_turn`; return partial answer + note: "I searched 3 times — here's what I found" |
-| Voyage query embedding fails | Emit `error` SSE event; show "Search failed, please retry" |
-| Query has no matching chunks | Claude gets empty results, responds naturally: "I couldn't find that in the transcript" |
-| Off-topic question | Claude answers from its own knowledge — expected, no special handling |
+| Chat requested before indexing complete | 409 `{ error: "not_indexed" }` |
+| Agent hits 3-iteration limit | Force stop, return partial answer + appended note: "I searched the transcript 3 times — here's what I found." |
+| Voyage query embed fails | Emit `error` SSE event; show "Search failed, please retry" |
+| Search returns empty results | Claude receives empty chunks, responds naturally; if answer is from general knowledge, prefixes with `[General knowledge]` |
+| Provider is OpenRouter | `ToolCallingAdapter` uses OpenAI tool-calling format transparently |
 
 ### Qdrant free tier
 
-- 1GB storage — a 1-hour video ≈ ~120 chunks ≈ ~0.5MB (voyage-3-lite: 512 dimensions × 4 bytes). Thousands of videos fit comfortably.
-- No TTL — embeddings persist indefinitely; correct behaviour for per-video caching.
-- No user auth needed — `video_id` is the cache key; all users share the same indexed vectors for a given video.
+- Realistic storage per video: dense vectors (512 dim × 4 bytes × ~120 chunks ≈ 250KB) + sparse vectors (~100KB) + payload text (~250KB) + index overhead ≈ **~3-5MB per video**
+- 1GB free tier → ~200-300 videos before approaching limit. Sufficient for dev/early prod; a Qdrant collection eviction policy (LRU by `indexed_at`) should be added before going beyond ~150 indexed videos.
 
 ---
 
-## 6. Testing Strategy
+## 7. Testing Strategy
 
 ### Unit tests (`backend/tests/`)
 
+**`test_transcript_cache_service.py`**
+- Persist + get round-trip
+- Get returns None on miss
+- Redis error in persist does not raise (fire-and-forget)
+
 **`test_rag_service.py`**
-- Chunk boundary correctness: no chunk splits mid-sentence; timestamps preserved
-- Idempotency: indexing same video twice does not duplicate Qdrant points
-- `is_indexed` returns correct state before and after indexing
+- Chunk boundary correctness: no mid-sentence splits, timestamps preserved
+- Single-chunk fallback for short transcripts
+- `is_index_valid` returns False when transcript_hash, chunking_version, or dense_model differs
+
+**`test_job_state_service.py`**
+- `acquire_lock` returns True first call, False on second concurrent call
+- `release_lock` allows re-acquisition
+
+**`test_tool_calling_adapter.py`**
+- Anthropic tool_use response correctly parsed into `AdapterResponse`
+- OpenAI tool_calls response correctly parsed into `AdapterResponse`
+- Tool result messages formatted correctly for each provider
 
 **`test_chat_service.py`**
-- Tool-calling loop exits cleanly at max 3 iterations
-- SSE event sequence is correct (status → tokens → done)
-- Conversation history passed correctly to Claude across turns
+- Agent loop exits at max 3 iterations
+- Partial-answer note appended at iteration limit
+- SSE event sequence: status → tokens → done
 
-### Integration tests (real Qdrant + Voyage, fixture transcript)
+### Integration tests (real services, fixture transcript)
 
-- Index a known 5-minute transcript → verify expected chunk count
-- Search with a known query → verify top result contains expected text
-- Full chat turn with a factual question → verify timestamp citations appear in response
-- Use dedicated Qdrant collection `test_<video_id>`, cleaned up after each run
-
-**No mocking of Qdrant or Voyage** in integration tests — aligns with existing project policy.
+- `POST /api/index` for a known 5-minute transcript → job state reaches `"ready"`, manifest written to Qdrant
+- `GET /api/index/status` reflects progress during indexing
+- Concurrent `POST /api/index` for same video_id → only one job runs (lock test)
+- `POST /api/chat` with a factual question → timestamp citations appear in response
+- `POST /api/chat` with an off-topic question → response contains `[General knowledge]` prefix
+- Use dedicated Qdrant collection `test_{video_id}`, cleaned up after each run
+- No mocking of Qdrant, Voyage, or Redis in integration tests
 
 ### Manual QA checklist
 
-- [ ] First open of AI Chat: indexing spinner appears, completes, chat ready
-- [ ] Sending a question: "Searching transcript..." appears, then answer streams
-- [ ] Timestamp chips are clickable and scroll transcript view correctly
-- [ ] Reload page, reopen AI Chat: skips re-indexing, goes straight to chat
-- [ ] Very long video (2hr+): indexing completes without timeout
-- [ ] Off-topic question: Claude answers naturally without hallucinating transcript content
+- [ ] Summarize a video; open AI Chat tab: indexing progress bar appears, completes
+- [ ] `GET /api/index/status` returns `ready` after completion
+- [ ] Reload page; reopen AI Chat: skips re-indexing (job state cached in Redis), goes straight to chat
+- [ ] Factual question: "Searching transcript..." appears inline, answer streams with `[MM:SS]` chips
+- [ ] Clicking `[MM:SS]` chip scrolls Transcript tab to the containing 2-minute bucket
+- [ ] Off-topic question: response starts with `[General knowledge]` in muted style
+- [ ] Two browser tabs open AI Chat simultaneously for same video: only one indexing job runs
+- [ ] 2hr+ video: indexing completes (via batch progress), job state reaches `"ready"`
+- [ ] Voyage API key missing: indexing fails gracefully with error message + retry button
 
 ---
 
-## 7. Future Extensions (out of scope for this spec)
+## 8. Future Extensions (out of scope for this spec)
 
-- **Quiz**: `POST /api/quiz` — retrieve chunks by topic, generate N MCQ/short-answer questions; reuses same RAG infrastructure
+- **Quiz**: `POST /api/quiz` — retrieve chunks by topic, generate MCQ/short-answer; reuses RAG infrastructure
 - **Flashcards**: `POST /api/flashcards` — retrieve concept-dense chunks, generate card pairs; same infrastructure
-- **Migrate existing features to RAG**: incremental, with quality validation per feature before shipping
-- **Multimodal**: YouTube storyboard thumbnails (via yt-dlp, no full video download) as v1.5 visual layer; full multimodal embeddings as v2
-- **Agentic upgrade path**: query decomposition for multi-hop questions once usage patterns are clear
+- **Per-timestamp transcript anchors**: add `id` attributes to transcript segments so citation chips can scroll precisely (prerequisite for exact-timestamp citations)
+- **Qdrant LRU eviction**: evict oldest indexed videos when approaching 1GB limit
+- **Redis persistence tier upgrade**: Upstash free tier is 10K commands/day; upgrade path is a paid Upstash plan or self-hosted Redis
+- **Migrate existing features to RAG**: incremental, quality-validated per feature
+- **Multimodal**: YouTube storyboard thumbnails as visual layer (yt-dlp, no full video download) — v1.5
