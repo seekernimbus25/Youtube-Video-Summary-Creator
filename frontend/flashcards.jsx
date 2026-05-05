@@ -5,6 +5,7 @@ const {
   useCallback: useStudyCallback,
 } = React;
 
+const DEMO_FLASHCARDS = window.DEMO_FLASHCARDS || { cards: [] };
 const studyFeatureCache = new Map();
 
 function studyBuddyHeaders() {
@@ -59,7 +60,7 @@ function persistStudyState(featureKey, videoId, nextState) {
   }
 }
 
-function useIndexedStudyFeature({ featureKey, videoId, summaryDone, endpoint, createDefaultState, hasPayload }) {
+function useIndexedStudyFeature({ featureKey, videoId, summaryDone, endpoint, createDefaultState, hasPayload, disabled = false }) {
   const defaultsRef = useStudyRef(null);
   const hasPayloadRef = useStudyRef(hasPayload);
   if (!defaultsRef.current) {
@@ -146,6 +147,7 @@ function useIndexedStudyFeature({ featureKey, videoId, summaryDone, endpoint, cr
   }, [cancelFeatureRequest, clearPolling, featureKey, nextRequestToken, videoId]);
 
   useStudyEffect(() => {
+    if (disabled) return;
     persistStudyState(featureKey, videoId, {
       indexStatus,
       indexProgress,
@@ -155,9 +157,10 @@ function useIndexedStudyFeature({ featureKey, videoId, summaryDone, endpoint, cr
       payload,
       metaState,
     });
-  }, [videoId, featureKey, indexStatus, indexProgress, indexError, loading, error, payload, metaState]);
+  }, [disabled, videoId, featureKey, indexStatus, indexProgress, indexError, loading, error, payload, metaState]);
 
   const triggerIndex = useStudyCallback(async () => {
+    if (disabled) return;
     if (!videoId || !summaryDone) return;
     const token = requestSeqRef.current;
     setIndexStatus("indexing");
@@ -183,9 +186,10 @@ function useIndexedStudyFeature({ featureKey, videoId, summaryDone, endpoint, cr
       setIndexStatus("failed");
       setIndexError("Network error. Please try again.");
     }
-  }, [isActiveToken, videoId, summaryDone, startPolling]);
+  }, [disabled, isActiveToken, videoId, summaryDone, startPolling]);
 
   const syncIndexStatus = useStudyCallback(async () => {
+    if (disabled) return;
     if (!videoId || !summaryDone || statusSyncRef.current) return;
     statusSyncRef.current = true;
     const token = requestSeqRef.current;
@@ -216,9 +220,10 @@ function useIndexedStudyFeature({ featureKey, videoId, summaryDone, endpoint, cr
       if (!isActiveToken(token)) return;
       triggerIndex();
     }
-  }, [isActiveToken, summaryDone, triggerIndex, videoId, startPolling]);
+  }, [disabled, isActiveToken, summaryDone, triggerIndex, videoId, startPolling]);
 
   const loadFeature = useStudyCallback(async (force = false) => {
+    if (disabled) return;
     if (!videoId || !summaryDone || loading) return;
     if (!force && hasPayloadRef.current(payload)) return;
     const token = requestSeqRef.current;
@@ -253,25 +258,28 @@ function useIndexedStudyFeature({ featureKey, videoId, summaryDone, endpoint, cr
         setLoading(false);
       }
     }
-  }, [cancelFeatureRequest, endpoint, isActiveToken, loading, payload, summaryDone, videoId]);
+  }, [cancelFeatureRequest, disabled, endpoint, isActiveToken, loading, payload, summaryDone, videoId]);
 
   useStudyEffect(() => {
+    if (disabled) return;
     if (indexStatus === "idle" && summaryDone && videoId) {
       syncIndexStatus();
     }
-  }, [indexStatus, summaryDone, videoId, syncIndexStatus]);
+  }, [disabled, indexStatus, summaryDone, videoId, syncIndexStatus]);
 
   useStudyEffect(() => {
+    if (disabled) return;
     if (indexStatus === "indexing" && videoId) {
       startPolling(videoId);
     }
-  }, [indexStatus, videoId, startPolling]);
+  }, [disabled, indexStatus, videoId, startPolling]);
 
   useStudyEffect(() => {
+    if (disabled) return;
     if (indexStatus === "ready" && summaryDone && videoId && !loading && !hasPayloadRef.current(payload)) {
       loadFeature(false);
     }
-  }, [indexStatus, loadFeature, loading, payload, summaryDone, videoId]);
+  }, [disabled, indexStatus, loadFeature, loading, payload, summaryDone, videoId]);
 
   return {
     indexStatus,
@@ -313,11 +321,13 @@ function StudyFailed({ message, onRetry }) {
 }
 
 function FlashcardsTab({ videoId, summaryDone }) {
+  const isDemoVideo = videoId === "demo";
   const feature = useIndexedStudyFeature({
     featureKey: "flashcards",
     videoId,
     summaryDone,
     endpoint: "/api/flashcards",
+    disabled: isDemoVideo,
     createDefaultState: () => ({
       indexStatus: "idle",
       indexProgress: 0,
@@ -330,16 +340,68 @@ function FlashcardsTab({ videoId, summaryDone }) {
     hasPayload: (payload) => Array.isArray(payload?.cards) && payload.cards.length > 0,
   });
 
-  const cards = Array.isArray(feature.payload?.cards) ? feature.payload.cards : [];
-  const currentIndex = Math.min(feature.metaState.currentIndex || 0, Math.max(cards.length - 1, 0));
-  const revealed = !!feature.metaState.revealed;
+  const [demoMetaState, setDemoMetaState] = useStudyState({ currentIndex: 0, revealed: false });
+  const cards = isDemoVideo
+    ? (Array.isArray(DEMO_FLASHCARDS.cards) ? DEMO_FLASHCARDS.cards : [])
+    : (Array.isArray(feature.payload?.cards) ? feature.payload.cards : []);
+  const currentIndex = Math.min((isDemoVideo ? demoMetaState.currentIndex : feature.metaState.currentIndex) || 0, Math.max(cards.length - 1, 0));
+  const revealed = isDemoVideo ? !!demoMetaState.revealed : !!feature.metaState.revealed;
   const card = cards[currentIndex];
 
   const setCurrentIndex = (nextIndex) => {
+    if (isDemoVideo) {
+      setDemoMetaState((prev) => ({ ...prev, currentIndex: nextIndex, revealed: false }));
+      return;
+    }
     feature.setMetaState((prev) => ({ ...prev, currentIndex: nextIndex, revealed: false }));
   };
 
   if (!summaryDone) return <StudyBlocked label="Flashcards" />;
+  if (isDemoVideo && !card) {
+    return <div className="study-empty">No flashcards were generated for this video yet.</div>;
+  }
+  if (isDemoVideo) {
+    return (
+      <div className="study-shell">
+        <div className="study-toolbar">
+          <div className="study-progress mono">CARD {String(currentIndex + 1).padStart(2, "0")} / {String(cards.length).padStart(2, "0")}</div>
+        </div>
+
+        <div className={`flashcard ${revealed ? "is-revealed" : ""}`}>
+          <div className="flashcard-panel">
+            <div className="flashcard-panel__label">{revealed ? "ANSWER" : "PROMPT"}</div>
+            <div className="flashcard-panel__content">{revealed ? card.back : card.front}</div>
+          </div>
+          <div className="flashcard-meta">
+            <span className="tag">{card.topic || "Study"}</span>
+            <button
+              type="button"
+              className="chat-timestamp-chip"
+              onClick={() => window.__scrollTranscriptTo && window.__scrollTranscriptTo(card.timestamp)}
+            >
+              ~{card.timestamp}
+            </button>
+          </div>
+        </div>
+
+        <div className="study-actions">
+          <button type="button" className="export-btn" onClick={() => setCurrentIndex((currentIndex - 1 + cards.length) % cards.length)} disabled={cards.length < 2}>
+            Previous
+          </button>
+          <button
+            type="button"
+            className="study-primary-btn"
+            onClick={() => setDemoMetaState((prev) => ({ ...prev, revealed: !prev.revealed }))}
+          >
+            {revealed ? "Hide answer" : "Reveal answer"}
+          </button>
+          <button type="button" className="export-btn" onClick={() => setCurrentIndex((currentIndex + 1) % cards.length)} disabled={cards.length < 2}>
+            Next
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (feature.indexStatus === "idle" || feature.indexStatus === "indexing") {
     return <StudyIndexing label="Flashcards" progress={feature.indexProgress} />;
   }

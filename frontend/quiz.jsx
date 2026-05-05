@@ -1,11 +1,15 @@
 const { useIndexedStudyFeature, StudyBlocked, StudyIndexing, StudyFailed } = window.__studyFeatureHelpers || {};
+const { useState: useQuizState } = React;
+const DEMO_QUIZ = window.DEMO_QUIZ || { questions: [] };
 
 function QuizTab({ videoId, summaryDone }) {
+  const isDemoVideo = videoId === "demo";
   const feature = useIndexedStudyFeature({
     featureKey: "quiz",
     videoId,
     summaryDone,
     endpoint: "/api/quiz",
+    disabled: isDemoVideo,
     createDefaultState: () => ({
       indexStatus: "idle",
       indexProgress: 0,
@@ -18,20 +22,36 @@ function QuizTab({ videoId, summaryDone }) {
     hasPayload: (payload) => Array.isArray(payload?.questions) && payload.questions.length > 0,
   });
 
-  const questions = Array.isArray(feature.payload?.questions) ? feature.payload.questions : [];
-  const currentIndex = Math.min(feature.metaState.currentIndex || 0, Math.max(questions.length - 1, 0));
-  const answers = feature.metaState.answers && typeof feature.metaState.answers === "object" ? feature.metaState.answers : {};
+  const [demoMetaState, setDemoMetaState] = useQuizState({ currentIndex: 0, answers: {} });
+  const questions = isDemoVideo
+    ? (Array.isArray(DEMO_QUIZ.questions) ? DEMO_QUIZ.questions : [])
+    : (Array.isArray(feature.payload?.questions) ? feature.payload.questions : []);
+  const currentIndex = Math.min((isDemoVideo ? demoMetaState.currentIndex : feature.metaState.currentIndex) || 0, Math.max(questions.length - 1, 0));
+  const answers = isDemoVideo
+    ? (demoMetaState.answers && typeof demoMetaState.answers === "object" ? demoMetaState.answers : {})
+    : (feature.metaState.answers && typeof feature.metaState.answers === "object" ? feature.metaState.answers : {});
   const question = questions[currentIndex];
   const selectedIndex = question ? answers[question.id] : undefined;
   const totalAnswered = questions.filter((item) => Number.isInteger(answers[item.id])).length;
   const score = questions.filter((item) => answers[item.id] === item.correct_index).length;
 
   const setCurrentIndex = (nextIndex) => {
+    if (isDemoVideo) {
+      setDemoMetaState((prev) => ({ ...prev, currentIndex: nextIndex }));
+      return;
+    }
     feature.setMetaState((prev) => ({ ...prev, currentIndex: nextIndex }));
   };
 
   const answerQuestion = (optionIndex) => {
     if (!question || Number.isInteger(selectedIndex)) return;
+    if (isDemoVideo) {
+      setDemoMetaState((prev) => ({
+        ...prev,
+        answers: { ...prev.answers, [question.id]: optionIndex },
+      }));
+      return;
+    }
     feature.setMetaState((prev) => ({
       ...prev,
       answers: { ...prev.answers, [question.id]: optionIndex },
@@ -39,6 +59,71 @@ function QuizTab({ videoId, summaryDone }) {
   };
 
   if (!summaryDone) return <StudyBlocked label="Quiz Me" />;
+  if (isDemoVideo && !question) {
+    return <div className="study-empty">No quiz questions were generated for this video yet.</div>;
+  }
+  if (isDemoVideo) {
+    return (
+      <div className="study-shell">
+        <div className="study-toolbar">
+          <div>
+            <div className="study-progress mono">QUESTION {String(currentIndex + 1).padStart(2, "0")} / {String(questions.length).padStart(2, "0")}</div>
+            <div className="study-score">Score {score}/{questions.length} - Answered {totalAnswered}/{questions.length}</div>
+          </div>
+        </div>
+
+        <div className="quiz-card">
+          <div className="quiz-card__prompt">{question.prompt}</div>
+          <div className="quiz-options">
+            {question.options.map((option, optionIndex) => {
+              const isSelected = selectedIndex === optionIndex;
+              const isCorrect = optionIndex === question.correct_index;
+              const stateClass = Number.isInteger(selectedIndex)
+                ? (isCorrect ? "is-correct" : (isSelected ? "is-wrong" : ""))
+                : "";
+              return (
+                <button
+                  key={`${question.id}-${optionIndex}`}
+                  type="button"
+                  className={`quiz-option ${isSelected ? "is-selected" : ""} ${stateClass}`}
+                  onClick={() => answerQuestion(optionIndex)}
+                  disabled={Number.isInteger(selectedIndex)}
+                >
+                  <span className="quiz-option__marker mono">{String.fromCharCode(65 + optionIndex)}</span>
+                  <span>{option}</span>
+                </button>
+              );
+            })}
+          </div>
+
+          {Number.isInteger(selectedIndex) ? (
+            <div className="quiz-feedback">
+              <div className="quiz-feedback__status">
+                {selectedIndex === question.correct_index ? "Correct" : "Incorrect"}
+              </div>
+              <p>{question.explanation}</p>
+              <button
+                type="button"
+                className="chat-timestamp-chip"
+                onClick={() => window.__scrollTranscriptTo && window.__scrollTranscriptTo(question.timestamp)}
+              >
+                ~{question.timestamp}
+              </button>
+            </div>
+          ) : null}
+        </div>
+
+        <div className="study-actions">
+          <button type="button" className="export-btn" onClick={() => setCurrentIndex((currentIndex - 1 + questions.length) % questions.length)} disabled={questions.length < 2}>
+            Previous
+          </button>
+          <button type="button" className="study-primary-btn" onClick={() => setCurrentIndex((currentIndex + 1) % questions.length)} disabled={questions.length < 2}>
+            Next question
+          </button>
+        </div>
+      </div>
+    );
+  }
   if (feature.indexStatus === "idle" || feature.indexStatus === "indexing") {
     return <StudyIndexing label="Quiz Me" progress={feature.indexProgress} />;
   }

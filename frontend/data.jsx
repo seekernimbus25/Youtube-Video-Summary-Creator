@@ -205,6 +205,113 @@ const DEMO_DATA = {
   },
 };
 
+const DEMO_CHAT_WELCOME_MESSAGE = "Ask me anything about this video.";
+const DEMO_CHAT_REPLY = "Hey there awesome person, thanks for trying out my YouTube summarizer. This is a demo video in the portfolio version of the project, so the AI chat here is intentionally fixed for showcase purposes. If you want real summaries, transcript-grounded AI chat, flashcards, and quiz generation for your own YouTube videos, please download the project from GitHub, run it locally, and plug in your own API key and retrieval credentials.";
+
+const DEMO_FLASHCARDS = {
+  cards: [
+    {
+      id: "fc-1",
+      front: "What is AI synthesis trying to improve?",
+      back: "It helps people process long videos faster by surfacing structure, key insights, and reusable outputs instead of forcing a full linear rewatch every time.",
+      topic: "Value",
+      timestamp: "00:00",
+    },
+    {
+      id: "fc-2",
+      front: "What is the demo's core argument about summaries?",
+      back: "The demo argues that summaries are strongest when they preserve hierarchy and structure, not when they only shorten content.",
+      topic: "Argument",
+      timestamp: "00:08",
+    },
+    {
+      id: "fc-3",
+      front: "Why are mind maps highlighted in the demo?",
+      back: "Mind maps help users see the conceptual layout of a video quickly before deciding where to go deeper.",
+      topic: "Mindmap",
+      timestamp: "00:16",
+    },
+    {
+      id: "fc-4",
+      front: "What makes the product more than just a short summary?",
+      back: "Its value comes from multiple structured outputs like insights, section backbones, mind maps, and exports, each serving a different cognitive job.",
+      topic: "Product",
+      timestamp: "00:08",
+    },
+    {
+      id: "fc-5",
+      front: "How does the demo describe the best workflow?",
+      back: "Start with the overall synthesis, inspect the section backbone, then export the output you need for notes, collaboration, or later review.",
+      topic: "Workflow",
+      timestamp: "00:16",
+    },
+    {
+      id: "fc-6",
+      front: "What problem does the demo say people actually have?",
+      back: "The real problem is not lack of information, but difficulty seeing hierarchy, transitions, and practical implications in long linear videos.",
+      topic: "Problem",
+      timestamp: "00:00",
+    },
+  ],
+};
+
+const DEMO_QUIZ = {
+  questions: [
+    {
+      id: "qq-1",
+      prompt: "According to the demo, what makes summaries most useful?",
+      options: [
+        "They preserve structure and hierarchy",
+        "They remove all nuance",
+        "They replace the original video entirely",
+        "They focus only on one-paragraph outputs",
+      ],
+      correct_index: 0,
+      explanation: "The demo emphasizes that structure matters more than simple compression.",
+      timestamp: "00:08",
+    },
+    {
+      id: "qq-2",
+      prompt: "What role does the mind map play in the product?",
+      options: [
+        "It stores API keys",
+        "It acts as the visual summary surface",
+        "It replaces transcript retrieval",
+        "It measures video duration",
+      ],
+      correct_index: 1,
+      explanation: "The mind map is framed as a visual way to understand the conceptual layout of the video.",
+      timestamp: "00:16",
+    },
+    {
+      id: "qq-3",
+      prompt: "What is the strongest workflow described in the demo?",
+      options: [
+        "Watch the full video twice before reading anything",
+        "Skip directly to export",
+        "Scan insights, inspect sections, then export",
+        "Only use the transcript",
+      ],
+      correct_index: 2,
+      explanation: "The demo outlines a sequential workflow: scan insights, inspect the section backbone, then export.",
+      timestamp: "00:16",
+    },
+    {
+      id: "qq-4",
+      prompt: "What broader problem is the demo trying to solve?",
+      options: [
+        "Information overload in long educational videos",
+        "Slow internet speeds",
+        "Thumbnail generation",
+        "Browser cookie errors",
+      ],
+      correct_index: 0,
+      explanation: "The product is positioned as a response to information overload and the difficulty of extracting value from long videos.",
+      timestamp: "00:00",
+    },
+  ],
+};
+
 const PROGRESS_STEPS = [
   "VALIDATE",
   "FETCH META",
@@ -213,4 +320,4 @@ const PROGRESS_STEPS = [
   "RENDER",
 ];
 
-Object.assign(window, { DEMO_DATA, PROGRESS_STEPS });
+Object.assign(window, { DEMO_DATA, DEMO_CHAT_WELCOME_MESSAGE, DEMO_CHAT_REPLY, DEMO_FLASHCARDS, DEMO_QUIZ, PROGRESS_STEPS });

@@ -6,6 +6,8 @@ const {
 } = React;
 
 const CHAT_WELCOME_MESSAGE = "Ask me anything about this video. I'll note when an answer comes from general knowledge rather than the video.";
+const DEMO_CHAT_WELCOME_MESSAGE = window.DEMO_CHAT_WELCOME_MESSAGE || "Ask me anything about this video.";
+const DEMO_CHAT_REPLY = window.DEMO_CHAT_REPLY || "This is a demo video in the portfolio build.";
 const chatStateCache = new Map();
 
 function createDefaultChatState() {
@@ -92,6 +94,7 @@ function ChatMessage({ msg }) {
 }
 
 function ChatTab({ videoId, summaryDone }) {
+  const isDemoVideo = videoId === "demo";
   const initialState = loadStoredChatState(videoId);
   const [indexStatus, setIndexStatus] = useChatState(initialState.indexStatus);
   const [indexProgress, setIndexProgress] = useChatState(initialState.indexProgress);
@@ -160,6 +163,17 @@ function ChatTab({ videoId, summaryDone }) {
     setMessages(next.messages);
     setInput("");
     setSending(false);
+    if (videoId === "demo") {
+      setIndexStatus("ready");
+      setIndexProgress(100);
+      setIndexError(null);
+      setMessages((prev) => {
+        if (Array.isArray(next.messages) && next.messages.length) {
+          return next.messages;
+        }
+        return [{ role: "assistant", content: DEMO_CHAT_WELCOME_MESSAGE }];
+      });
+    }
   }, [videoId]);
 
   useChatEffect(() => {
@@ -203,20 +217,29 @@ function ChatTab({ videoId, summaryDone }) {
   }, [videoId, summaryDone, startPolling]);
 
   useChatEffect(() => {
+    if (isDemoVideo) return;
     if (indexStatus === "idle" && summaryDone && videoId) {
       triggerIndex();
     }
-  }, [indexStatus, summaryDone, videoId, triggerIndex]);
+  }, [isDemoVideo, indexStatus, summaryDone, videoId, triggerIndex]);
 
   useChatEffect(() => {
+    if (isDemoVideo) return;
     if (indexStatus === "indexing" && videoId) {
       startPolling(videoId);
     }
-  }, [indexStatus, videoId, startPolling]);
+  }, [isDemoVideo, indexStatus, videoId, startPolling]);
 
   async function sendMessage() {
     const text = input.trim();
     if (!text || sending) return;
+    if (isDemoVideo) {
+      setSending(true);
+      setInput("");
+      setMessages((prev) => [...prev, { role: "user", content: text }, { role: "assistant", content: DEMO_CHAT_REPLY }]);
+      setSending(false);
+      return;
+    }
 
     const controller = new AbortController();
     const requestId = requestSeqRef.current + 1;
@@ -333,6 +356,30 @@ function ChatTab({ videoId, summaryDone }) {
 
   if (!summaryDone) {
     return <div className="chat-blocked">Summarize a video first to use AI Chat.</div>;
+  }
+
+  if (isDemoVideo) {
+    return (
+      <div className="chat-container">
+        <div className="chat-messages">
+          {messages.map((msg, i) => <ChatMessage key={i} msg={msg} />)}
+          <div ref={bottomRef} />
+        </div>
+        <div className="chat-input-row">
+          <input
+            className="chat-input"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && !e.shiftKey && sendMessage()}
+            placeholder="Ask anything about this demo video..."
+            disabled={sending}
+          />
+          <button className="chat-send" type="button" onClick={sendMessage} disabled={sending || !input.trim()}>
+            {sending ? "..." : "->"}
+          </button>
+        </div>
+      </div>
+    );
   }
 
   if (indexStatus === "idle" || indexStatus === "indexing") {
