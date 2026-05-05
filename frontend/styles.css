@@ -1644,3 +1644,260 @@ details[open] .acc-caret { transform: rotate(90deg); }
 
 /* screen-label hidden chip */
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* AI Chat tab */
+.chat-container { display: flex; flex-direction: column; height: 100%; min-height: 400px; min-width: 0; }
+.chat-messages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.chat-message { display: flex; }
+.chat-message--user { justify-content: flex-end; }
+.chat-message--assistant { justify-content: flex-start; }
+.chat-message__bubble { max-width: 80%; min-width: 0; padding: 10px 14px; border-radius: 12px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.chat-message--user .chat-message__bubble { background: var(--led-amber); color: #fff; }
+.chat-message--assistant .chat-message__bubble { background: rgba(0,0,0,.06); color: var(--ink); border: 1px solid rgba(0,0,0,.08); }
+.chat-message--general .chat-message__bubble { font-style: italic; opacity: 0.85; }
+.chat-timestamp-chip { display: inline-block; background: var(--led-amber); color: #fff; border: none; border-radius: 4px; padding: 1px 6px; font-size: 0.78em; cursor: pointer; margin: 0 2px; font-family: "JetBrains Mono", ui-monospace, monospace; }
+.chat-timestamp-chip:hover { opacity: 0.8; }
+.chat-input-row { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid rgba(0,0,0,.1); min-width: 0; }
+.chat-input { flex: 1; min-width: 0; background: rgba(255,255,255,.65); border: 1px solid rgba(0,0,0,.12); color: var(--ink); border-radius: 8px; padding: 10px 14px; font-size: 0.95rem; }
+.chat-input:disabled { opacity: 0.5; }
+.chat-send { background: var(--led-amber); color: #fff; border: none; border-radius: 8px; padding: 10px 18px; cursor: pointer; font-size: 1rem; }
+.chat-send:disabled { opacity: 0.4; cursor: not-allowed; }
+.chat-indexing { padding: 32px 24px; text-align: center; }
+.chat-indexing__label { color: var(--ink); margin-bottom: 12px; }
+.chat-indexing__bar { background: rgba(0,0,0,.08); border-radius: 4px; height: 8px; overflow: hidden; }
+.chat-indexing__fill { background: var(--led-amber); height: 100%; transition: width 0.4s ease; }
+.chat-blocked, .chat-failed { padding: 32px 24px; color: var(--muted); text-align: center; }
+.chat-failed button { margin-top: 12px; background: var(--led-amber); color: #fff; border: none; border-radius: 6px; padding: 8px 16px; cursor: pointer; }
+
+/* Study tabs */
+.study-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-height: 400px;
+  min-width: 0;
+}
+.study-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  min-width: 0;
+}
+.study-progress {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: .14em;
+}
+.study-score {
+  margin-top: 6px;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+.study-loading,
+.study-empty,
+.study-failed {
+  padding: 32px 24px;
+  border-radius: 12px;
+  text-align: center;
+  color: var(--ink-soft);
+  background: rgba(255,255,255,.3);
+  border: 1px solid rgba(0,0,0,.08);
+}
+.study-failed button {
+  margin-top: 12px;
+  background: var(--led-amber);
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+.study-actions {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+.study-primary-btn {
+  border: 1px solid #7a2d04;
+  background: radial-gradient(ellipse at 50% 20%, #ffb27a 0%, var(--led-amber) 40%, #c14b0c 100%);
+  color: #fff7ef;
+  border-radius: 999px;
+  padding: 11px 18px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(193,75,12,.22);
+}
+.study-primary-btn:disabled,
+.export-btn:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+.flashcard {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  min-height: 270px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255,255,255,.55) 0%, rgba(255,255,255,.22) 100%);
+  border: 1px solid rgba(0,0,0,.12);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 14px 30px rgba(0,0,0,.08);
+}
+.flashcard-panel {
+  display: grid;
+  gap: 12px;
+}
+.flashcard-panel__label {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: .16em;
+  color: var(--muted);
+}
+.flashcard-panel__content {
+  font-size: 22px;
+  line-height: 1.45;
+  color: var(--ink);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.flashcard.is-revealed .flashcard-panel__content {
+  font-size: 18px;
+  color: var(--ink-soft);
+}
+.flashcard-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.quiz-card {
+  display: grid;
+  gap: 18px;
+  padding: 20px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255,255,255,.55) 0%, rgba(255,255,255,.22) 100%);
+  border: 1px solid rgba(0,0,0,.12);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 14px 30px rgba(0,0,0,.08);
+}
+.quiz-card__prompt {
+  font-size: 21px;
+  line-height: 1.45;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.quiz-options {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.quiz-option {
+  display: grid;
+  grid-template-columns: 32px 1fr;
+  gap: 12px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(0,0,0,.1);
+  background: rgba(255,255,255,.45);
+  color: var(--ink-soft);
+  text-align: left;
+  cursor: pointer;
+  transition: transform .12s ease, background .12s ease, border-color .12s ease;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.quiz-option:hover:not(:disabled) {
+  transform: translateY(-1px);
+  background: rgba(255,255,255,.65);
+}
+.quiz-option__marker {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #1f1c17;
+  color: #f2e6d1;
+  font-size: 11px;
+}
+.quiz-option.is-selected {
+  border-color: rgba(193,75,12,.45);
+  background: rgba(255,183,122,.25);
+}
+.quiz-option.is-correct {
+  border-color: rgba(95,208,122,.45);
+  background: rgba(95,208,122,.18);
+}
+.quiz-option.is-wrong {
+  border-color: rgba(224,56,38,.35);
+  background: rgba(224,56,38,.12);
+}
+.quiz-feedback {
+  padding: 16px;
+  border-radius: 12px;
+  background: rgba(0,0,0,.04);
+  border: 1px solid rgba(0,0,0,.08);
+  color: var(--ink-soft);
+}
+.quiz-feedback__status {
+  margin-bottom: 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px;
+  letter-spacing: .16em;
+  color: var(--led-amber);
+}
+@media (max-width: 700px) {
+  .chat-message__bubble {
+    max-width: 100%;
+  }
+  .chat-input-row {
+    flex-direction: column;
+  }
+  .chat-send,
+  .chat-input,
+  .study-primary-btn,
+  .study-actions .export-btn,
+  .study-toolbar .export-btn {
+    width: 100%;
+  }
+  .study-toolbar,
+  .study-actions,
+  .flashcard-meta {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .flashcard,
+  .quiz-card,
+  .study-loading,
+  .study-empty,
+  .study-failed,
+  .chat-blocked,
+  .chat-failed,
+  .chat-indexing {
+    padding: 18px 16px;
+  }
+  .flashcard-panel__content,
+  .quiz-card__prompt {
+    font-size: 18px;
+  }
+  .quiz-option {
+    grid-template-columns: 28px 1fr;
+    gap: 10px;
+    padding: 12px;
+  }
+  .quiz-option__marker {
+    width: 20px;
+    height: 20px;
+  }
+}

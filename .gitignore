@@ -23,6 +23,7 @@ build/
 # Virtual environments
 venv/
 .venv/
+backend/.venv312/
 env/
 ENV/
 

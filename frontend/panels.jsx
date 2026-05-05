@@ -129,7 +129,7 @@ const MindmapPanel = ({ data, context, onPng, loading }) => (
   </div>
 );
 
-const TranscriptPanel = ({ data, format, onFormat, onDownload, onCopy }) => {
+const TranscriptPanel = ({ data, format, onFormat, onDownload, onCopy, transcriptRowRefs }) => {
   const transcript = data?.transcript || { segments: [], text: "" };
   const segments = Array.isArray(transcript.segments) ? transcript.segments : [];
 
@@ -150,7 +150,15 @@ const TranscriptPanel = ({ data, format, onFormat, onDownload, onCopy }) => {
       ) : (
         <div className="transcript-list">
           {segments.map((segment) => (
-            <div key={segment.id} className="transcript-row">
+            <div
+              key={segment.id}
+              className="transcript-row"
+              ref={(el) => {
+                if (!transcriptRowRefs?.current) return;
+                if (el) transcriptRowRefs.current.set(segment.id, el);
+                else transcriptRowRefs.current.delete(segment.id);
+              }}
+            >
               <div className="transcript-time mono">[{segment.timestamp}]</div>
               <div className="transcript-text">{segment.text}</div>
             </div>
@@ -342,6 +350,9 @@ const SUMMARY_TABS = [
   { id: "deep-dive", label: "Deep Dive" },
   { id: "mindmap", label: "Mind Map" },
   { id: "transcript", label: "Transcript" },
+  { id: "ai-chat", label: "AI Chat" },
+  { id: "flashcards", label: "Flashcards" },
+  { id: "quiz-me", label: "Quiz Me" },
 ];
 
 const SummaryWorkspace = ({
@@ -354,8 +365,25 @@ const SummaryWorkspace = ({
   onTranscriptCopy,
   onMindmapPng,
   mindmapLoading,
+  videoId,
+  summaryDone,
+  transcriptRowRefs,
 }) => {
   const currentTab = SUMMARY_TABS.some((tab) => tab.id === activeTab) ? activeTab : "insights";
+  const [activatedTabs, setActivatedTabs] = React.useState(() => new Set(["ai-chat"]));
+
+  React.useEffect(() => {
+    setActivatedTabs(new Set(["ai-chat"]));
+  }, [videoId]);
+
+  React.useEffect(() => {
+    setActivatedTabs((prev) => {
+      if (prev.has(currentTab)) return prev;
+      const next = new Set(prev);
+      next.add(currentTab);
+      return next;
+    });
+  }, [currentTab]);
 
   return (
     <div className="summary-workspace">
@@ -407,7 +435,33 @@ const SummaryWorkspace = ({
           onFormat={onFormat}
           onDownload={(nextFormat) => onSectionDownload && onSectionDownload("transcript", nextFormat)}
           onCopy={onTranscriptCopy}
+          transcriptRowRefs={transcriptRowRefs}
         />
+      ) : null}
+      <div
+        role="tabpanel"
+        hidden={currentTab !== "ai-chat"}
+        aria-hidden={currentTab !== "ai-chat" ? "true" : "false"}
+      >
+          <ChatTab videoId={videoId} summaryDone={summaryDone} />
+      </div>
+      {activatedTabs.has("flashcards") ? (
+        <div
+          role="tabpanel"
+          hidden={currentTab !== "flashcards"}
+          aria-hidden={currentTab !== "flashcards" ? "true" : "false"}
+        >
+          <FlashcardsTab videoId={videoId} summaryDone={summaryDone} />
+        </div>
+      ) : null}
+      {activatedTabs.has("quiz-me") ? (
+        <div
+          role="tabpanel"
+          hidden={currentTab !== "quiz-me"}
+          aria-hidden={currentTab !== "quiz-me" ? "true" : "false"}
+        >
+          <QuizTab videoId={videoId} summaryDone={summaryDone} />
+        </div>
       ) : null}
     </div>
   );

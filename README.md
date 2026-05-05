@@ -10,125 +10,162 @@ The public website version of this project is a portfolio demo, not the full pro
 - Real YouTube URL summarization is disabled on the public deployment because it consumes API credits.
 - If you want to test the actual workflow with your own links, download the repository and run it on `localhost` with your own API key.
 
-An AI-powered tool that generates deep, structured summaries of YouTube videos using Claude. Paste a URL and get a full breakdown — key sections, insights, concepts, comparisons, and a visual mind map — without watching the video.
+An AI-powered tool that generates deep, structured summaries of YouTube videos using Claude. Paste a URL and get a full breakdown: key sections, insights, concepts, comparisons, and a visual mind map without watching the full video.
 
 ## Features
 
-- **Structured summary** — video overview, key sections with timestamps, key insights, important concepts explained, practical recommendations, and conclusion
-- **Comparison table** — auto-generated when the video compares multiple tools, methods, or options
-- **Interactive mind map** — visual D3.js graph of the video's ideas and structure
-- **Export** — copy or download the full summary as a Markdown file
-- **Streaming UI** — results stream in progressively via SSE so you see progress in real time
+- Structured summary: video overview, key sections with timestamps, key insights, important concepts explained, practical recommendations, and conclusion
+- Comparison table: auto-generated when the video compares multiple tools, methods, or options
+- Interactive mind map: visual D3.js graph of the video's ideas and structure
+- Export: copy or download the full summary as a Markdown file
+- Streaming UI: results stream in progressively via SSE so you see progress in real time
+- Agentic RAG chat: transcript-grounded AI chat with indexing, retrieval, and timestamp chips
 
 ## How It Works
 
 ### Summarization Pipeline
 
-Long videos are handled through a **map-reduce pipeline** — the transcript is split into sequential chunks, each summarised independently, then synthesised into a single coherent output. This ensures the full video is covered regardless of length.
+Long videos are handled through a map-reduce pipeline. The transcript is split into sequential chunks, each is summarized independently, and the chunk summaries are merged into one coherent output.
 
-```
+```text
 Transcript
-  → Type detection (tutorial / lecture / opinion / general)
-  → Semantic chunking (split at sentence boundaries)
-  → Type-aware map — each chunk summarised with a prompt tuned to the video type
-  → Reduce — chunk summaries merged into the final structured output
+  -> Type detection (tutorial / lecture / opinion / general)
+  -> Semantic chunking
+  -> Type-aware map pass
+  -> Reduce pass
 ```
 
-The map-reduce path activates automatically for transcripts over ~46,000 characters. Shorter videos go through a single-pass path.
+The map-reduce path activates automatically for long transcripts. Shorter videos go through a single-pass path.
 
 ## Tech Stack
 
-- **Backend** — Python, FastAPI, Anthropic SDK (Claude), yt-dlp, youtube-transcript-api
-- **Frontend** — Vanilla HTML/CSS/JS, D3.js (mind map)
+- Backend: FastAPI, Anthropic SDK, OpenAI/OpenRouter client support, yt-dlp, youtube-transcript-api, Qdrant, Voyage AI, Upstash Redis
+- Backend runtime: Python 3.12 virtualenv recommended in `backend\.venv312`
+- Frontend: Vanilla HTML/CSS/JS, React 18 CDN, D3.js
 
 ## Prerequisites
 
-- Python 3.10+
-- An [Anthropic API key](https://console.anthropic.com/)
+- Python 3.12 for the backend workflow
+- An [Anthropic API key](https://console.anthropic.com/) or another supported provider key
 
 ## Setup
 
-1. **Clone the repo**
-   ```bash
-   git clone https://github.com/seekernimbus25/youtube-video-summary-creator.git
-   cd youtube-video-summary-creator
-   ```
+1. Clone the repo
 
-2. **Install Python dependencies**
-   ```bash
-   cd backend
-   pip install -r requirements.txt
-   ```
+```bash
+git clone https://github.com/seekernimbus25/youtube-video-summary-creator.git
+cd youtube-video-summary-creator
+```
 
-   For local testing and CI:
-   ```bash
-   pip install -r requirements-dev.txt
-   ```
+2. Create a Python 3.12 backend environment
 
-3. **Add your API key**
+```powershell
+cd backend
+py -3.12 -m venv .venv312
+.venv312\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r requirements-dev.txt
+```
 
-   Create a `.env` file inside the `backend/` folder:
-   ```
-   ANTHROPIC_API_KEY=your_api_key_here
-   SUMMARIZER_API_KEY=optional_shared_api_key
-   ALLOWED_ORIGINS=https://yourdomain.com
-   RATE_LIMIT_MAX_REQUESTS=5
-   RATE_LIMIT_WINDOW_SECONDS=900
-   ```
+Or use the bundled bootstrap:
 
-   If YouTube starts returning "Sign in to confirm you're not a bot", add one of these too:
-   ```
-   YTDLP_COOKIES_FROM_BROWSER=chrome
-   ```
-   Or, if you want the backend to try common local browsers automatically:
-   ```
-   YTDLP_AUTO_BROWSER_COOKIES=true
-   ```
-   Or point directly to an exported cookie file:
-   ```
-   YTDLP_COOKIES_FILE=C:\path\to\cookies.txt
-   ```
+```powershell
+cd backend
+.\setup-py312.ps1
+```
 
-4. **Run the server**
-   ```bash
-   uvicorn main:app --reload
-   ```
+Notes:
 
-5. **Open the app**
+- The backend RAG dependencies are intended to run under Python 3.12.
+- Running them under Python 3.14 on Windows currently breaks dependency installation for the sparse-search stack.
+- The bootstrap script also forces a backend-local temp directory, which avoids `ensurepip` permission failures on locked-down Windows temp folders.
 
-   Go to [http://localhost:8000](http://localhost:8000) in your browser.
+3. Add your API key
+
+Create a `.env` file inside `backend/`:
+
+```env
+ANTHROPIC_API_KEY=your_api_key_here
+SUMMARIZER_API_KEY=optional_shared_api_key
+ALLOWED_ORIGINS=http://localhost:8000
+RATE_LIMIT_MAX_REQUESTS=5
+RATE_LIMIT_WINDOW_SECONDS=900
+VOYAGE_API_KEY=your_voyage_api_key_here
+QDRANT_URL=https://your-cluster.qdrant.io
+QDRANT_API_KEY=your_qdrant_api_key_here
+UPSTASH_REDIS_URL=https://your-instance.upstash.io
+UPSTASH_REDIS_TOKEN=your_upstash_token_here
+```
+
+If YouTube starts returning bot checks, add one of these too:
+
+```env
+YTDLP_COOKIES_FROM_BROWSER=chrome
+```
+
+or:
+
+```env
+YTDLP_AUTO_BROWSER_COOKIES=true
+```
+
+or:
+
+```env
+YTDLP_COOKIES_FILE=C:\path\to\cookies.txt
+```
+
+4. Run the server
+
+```powershell
+cd backend
+.\run-dev-py312.ps1
+```
+
+Or, from an activated `backend\.venv312` shell:
+
+```powershell
+python -m uvicorn main:app --reload --port 8000
+```
+
+5. Open the app
+
+Go to [http://localhost:8000](http://localhost:8000) in your browser.
 
 ## Usage
 
 1. Paste any YouTube URL into the input field
-2. Click **Summarize Video**
-3. Wait ~30–60 seconds while the transcript is fetched and Claude generates the analysis
-4. Use **Copy as Markdown** or **Download .md** to export the summary
+2. Click the summarize action
+3. Wait while the transcript is fetched and the backend generates the analysis
+4. Open the AI Chat tab after summarization to trigger indexing and ask transcript-grounded questions
+5. Use the export actions to copy or download the summary
 
 ## Notes
 
-- The hosted portfolio UI is intentionally demo-only and will not summarize arbitrary public URLs
-- To test real end-to-end summarization, run the app locally with your own API credits
-
-- The video must have captions/subtitles available on YouTube (auto-generated captions work)
-- Claude model used defaults to `claude-haiku-4-5-20251001`. You can override this by setting `CLAUDE_MODEL` in your `.env` file
-- `yt-dlp` now stays anonymous by default. Browser cookies are only used if you set `YTDLP_COOKIES_FROM_BROWSER`, `YTDLP_COOKIES_FILE`, or explicitly enable `YTDLP_AUTO_BROWSER_COOKIES=true`
-
-- Production deployments should set `ALLOWED_ORIGINS` explicitly and use `SUMMARIZER_API_KEY` if the summarize API is not intended to be public
+- The hosted portfolio UI is intentionally demo-only and will not summarize arbitrary public URLs.
+- To test real end-to-end summarization, run the app locally with your own API credits.
+- The video must have captions or subtitles available on YouTube.
+- The default Anthropic model is `claude-haiku-4-5-20251001`. You can override this with `CLAUDE_MODEL`.
+- `yt-dlp` stays anonymous by default. Browser cookies are only used if you opt into them with the relevant env vars.
+- Production deployments should set `ALLOWED_ORIGINS` explicitly and use `SUMMARIZER_API_KEY` if the summarize API is not intended to be public.
 
 ## Project Structure
 
-```
+```text
 yt-video-summariser/
-├── backend/
-│   ├── main.py                  # FastAPI app, SSE endpoint
-│   ├── models.py                # Pydantic models
-│   ├── requirements.txt
-│   ├── services/
-│   │   ├── claude_service.py    # Prompt + Claude API call
-│   │   ├── transcript_service.py # YouTube transcript fetching
-│   │   └── video_service.py     # Video metadata via yt-dlp
-│   └── static/
-└── frontend/
-    └── index.html               # Single-page UI
+|-- backend/
+|   |-- .python-version
+|   |-- setup-py312.ps1
+|   |-- run-dev-py312.ps1
+|   |-- main.py
+|   |-- models.py
+|   |-- requirements.txt
+|   |-- requirements-dev.txt
+|   |-- services/
+|   `-- tests/
+`-- frontend/
+    |-- index.html
+    |-- app.jsx
+    |-- panels.jsx
+    `-- chat.jsx
 ```

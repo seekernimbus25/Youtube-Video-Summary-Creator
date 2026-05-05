@@ -246,7 +246,7 @@ function App() {
   const [tweaks, setTweaks] = useTweaks();
   const demoOnlyMode = isPortfolioDemoMode();
 
-  const [url, setUrl] = useState("https://www.videohost.example/watch?v=demo-modular-synth");
+  const [url, setUrl] = useState("https://www.videohost.example/watch?v=demo");
   const [depthKnob, setDepthKnob] = useState(58);
 
   // pipeline state: idle | running | done | error
@@ -259,11 +259,13 @@ function App() {
   const [exportFmt, setExportFmt] = useState("md");
   const [mindmapReady, setMindmapReady] = useState(false);
   const [activeTab, setActiveTab] = useState("insights");
+  const [videoId, setVideoId] = useState(null);
 
   const timerRef = useRef(null);
   const cancelRef = useRef(false);
   const resultsRef = useRef(null);
   const hasPinnedResultsRef = useRef(false);
+  const transcriptRowRefs = useRef(new Map());
 
   const pinResultsToTop = () => {
     if (hasPinnedResultsRef.current) return;
@@ -279,6 +281,7 @@ function App() {
     setState("running");
     setError(null);
     setResult(null);
+    setVideoId(null);
     setMindmapReady(false);
     setActiveTab("insights");
     setStepIdx(0);
@@ -311,6 +314,7 @@ function App() {
             setState("done");
             setMindmapReady(true);
             setResult(next);
+            setVideoId("demo");
             pinResultsToTop();
           };
           /* One commit: setInterval is outside React; avoid done+result splitting across renders (R17 / edge cases). */
@@ -387,6 +391,7 @@ function App() {
                             const res = mapApiResultToView(data.data);
                             setMindmapReady(true);
                             setResult(res);
+                            setVideoId(data.data.video_id);
                             pinResultsToTop();
                             setState("done");
                         } else if (data.type === 'error') {
@@ -427,7 +432,7 @@ function App() {
     }
   };
   const onDemo = () => {
-    setUrl("https://www.videohost.example/watch?v=demo-modular-synth");
+      setUrl("https://www.videohost.example/watch?v=demo");
     run(DEMO_DATA);
   };
 
@@ -437,6 +442,25 @@ function App() {
       return () => clearTimeout(t);
     }
   }, []); // on mount
+
+  useEffect(() => {
+    window.__scrollTranscriptTo = (timestamp) => {
+      const parts = String(timestamp || "00:00").split(":").map((n) => Number(n) || 0);
+      const totalSeconds = parts.length === 3
+        ? parts[0] * 3600 + parts[1] * 60 + parts[2]
+        : parts[0] * 60 + parts[1];
+      const bucketStart = Math.floor(totalSeconds / TRANSCRIPT_BATCH_SECONDS) * TRANSCRIPT_BATCH_SECONDS;
+      const targetId = `tr-batch-${bucketStart}`;
+
+      setActiveTab("transcript");
+      requestAnimationFrame(() => {
+        transcriptRowRefs.current.get(targetId)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    };
+    return () => {
+      delete window.__scrollTranscriptTo;
+    };
+  }, []);
 
   const handleScopedExportDownload = (scope, fmt) => {
     if (!result || !window.downloadSummarySection) return;
@@ -566,6 +590,9 @@ DISTILLER
               onTranscriptCopy={handleTranscriptCopy}
               onMindmapPng={handleMindmapPng}
               mindmapLoading={!mindmapReady}
+              videoId={videoId}
+              summaryDone={state === "done"}
+              transcriptRowRefs={transcriptRowRefs}
             />
             <div className="mono" style={{ fontSize: 10, color: "var(--muted)", letterSpacing: ".1em", padding: "0 4px" }}>
               ▸ EXPORT PREVIEW ({exportFmt.toUpperCase()}): {exportSnippet}
